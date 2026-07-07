@@ -58,9 +58,6 @@ public class Invoice {
     @JsonProperty("Balance")
     private BigDecimal balance;
 
-    @JsonProperty("DueDate")
-    private String dueDateStr;
-
     @JsonProperty("MetaData")
     private MetaData metaData;
 

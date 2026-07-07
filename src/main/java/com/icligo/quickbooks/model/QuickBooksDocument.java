@@ -66,7 +66,8 @@ public class QuickBooksDocument {
     private String type;
 
     @Schema(description = "Only used for SALES_RECEIPT/REFUND_RECEIPT. 1=credit_card, 2=debit_card, "
-            + "anything else defaults to credit_card.", example = "1")
+            + "any other non-null value maps to \"other\". If omitted/null, no payment method is sent "
+            + "at all and QuickBooks applies the company's account default.", example = "1")
     private Integer paymentMethod;
 
     @Schema(description = "Not currently used by document creation. Accepted for forward-compatibility only.")

@@ -238,8 +238,8 @@ public class QuickBooksActivitiesImpl implements QuickBooksActivities {
         };
     }
 
+    /** Only called from a {@code paymentMethod != null} guard — {@code code} is never null here. */
     private String mapPaymentMethod(Integer code) {
-        if (code == null) return "credit_card";
         return switch (code) {
             case 1  -> "credit_card";
             case 2  -> "debit_card";

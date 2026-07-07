@@ -54,7 +54,7 @@ One endpoint creates all three document types; `type` selects which.
 | `refundId` | string | required if `type=REFUND_RECEIPT` | see above |
 | `description` | string | no | mapped to the QuickBooks document's customer memo |
 | `microsite` | string | no | defaults to `"icligousa"` |
-| `paymentMethod` | integer | no | only used for `SALES_RECEIPT`/`REFUND_RECEIPT`. `1`→credit_card, `2`→debit_card, anything else (incl. omitted)→`other`/credit_card default |
+| `paymentMethod` | integer | no | only used for `SALES_RECEIPT`/`REFUND_RECEIPT`. `1`→credit_card, `2`→debit_card, any other non-null value→`other`. Omitted/`null` → no payment method sent at all, QuickBooks applies the account default |
 | `items` | array | no | line items, see 3.3. Empty/omitted → document created with zero lines |
 
 Fields accepted but **not currently applied** to the QuickBooks document — safe to omit,

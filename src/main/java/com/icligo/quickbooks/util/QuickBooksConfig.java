@@ -11,8 +11,13 @@ public class QuickBooksConfig {
     private String realmId;
     private String clientId;
     private String clientSecret;
-    private String accessToken;
-    private String refreshToken;
+
+    // Mutated by OAuthService from synchronized methods, read unsynchronized by
+    // QuickBooksClient.AuthInterceptor from OkHttp dispatcher threads — volatile for
+    // cross-thread visibility (OAuthService's own synchronization doesn't cover this reader).
+    private volatile String accessToken;
+    private volatile String refreshToken;
+
     private String redirectUri;
 
     @Builder.Default
