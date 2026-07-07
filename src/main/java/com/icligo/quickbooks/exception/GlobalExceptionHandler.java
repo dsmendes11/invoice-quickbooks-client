@@ -3,6 +3,7 @@ package com.icligo.quickbooks.exception;
 import com.icligo.quickbooks.util.QuickBooksException;
 import io.temporal.client.WorkflowException;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -40,6 +41,12 @@ public class GlobalExceptionHandler {
             HttpMediaTypeNotSupportedException.class})
     public ResponseEntity<ApiError> handleBadRequest(Exception ex) {
         return build(HttpStatus.BAD_REQUEST, ex.getMessage(), null);
+    }
+
+    @ExceptionHandler(DuplicateKeyException.class)
+    public ResponseEntity<ApiError> handleDuplicateKey(DuplicateKeyException ex) {
+        return build(HttpStatus.CONFLICT,
+                "A document for this type/serviceId/productId/refundId was already created concurrently", null);
     }
 
     @ExceptionHandler(QuickBooksException.class)

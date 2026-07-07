@@ -93,6 +93,13 @@
             <version>2.5.0</version>
         </dependency>
 
+        <!-- ==================== Mailjet (admin alerts) ==================== -->
+        <dependency>
+            <groupId>com.mailjet</groupId>
+            <artifactId>mailjet-client</artifactId>
+            <version>4.2.0</version>
+        </dependency>
+
         <!-- ==================== HTTP Client ==================== -->
         <dependency>
             <groupId>com.squareup.okhttp3</groupId>

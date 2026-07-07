@@ -41,18 +41,24 @@ public class OAuthService {
     private volatile String pendingState;
 
     private final StoredTokensRepository storedTokensRepository;
+    private final QuickBooksAlertService alertService;
 
-    public OAuthService(QuickBooksConfig config, StoredTokensRepository storedTokensRepository) {
+    // Edge-triggered: only email once per break, reset once the connection works again
+    private volatile boolean disconnectedAlertSent;
+
+    public OAuthService(QuickBooksConfig config, StoredTokensRepository storedTokensRepository,
+                         QuickBooksAlertService alertService) {
         this.config = config;
         this.httpClient = new OkHttpClient.Builder().build();
         this.objectMapper = new ObjectMapper();
-        
+
         // Initialize with config tokens
         this.currentAccessToken = config.getAccessToken();
         this.currentRefreshToken = config.getRefreshToken();
         this.tokenExpiresAt = System.currentTimeMillis() + (3600 * 1000);
 
         this.storedTokensRepository = storedTokensRepository;
+        this.alertService = alertService;
     }
 
     public synchronized String getAccessToken() throws QuickBooksException {
@@ -70,9 +76,10 @@ public class OAuthService {
 
     public synchronized void refreshAccessToken() throws QuickBooksException {
         if (currentRefreshToken == null || currentRefreshToken.isEmpty()) {
+            alertOnce("No refresh token available. Please re-authenticate.");
             throw new QuickBooksException("No refresh token available. Please re-authenticate.");
         }
-        
+
         try {
             String credentials = config.getClientId() + ":" + config.getClientSecret();
             String basicAuth = "Basic " + Base64.getEncoder().encodeToString(credentials.getBytes());
@@ -91,16 +98,17 @@ public class OAuthService {
                 
                 if (!response.isSuccessful()) {
                     log.error("Token refresh failed: {} - {}", response.code(), responseBody);
+                    alertOnce("Failed to refresh token: " + response.code() + " - " + responseBody);
                     throw new QuickBooksException(
                             "Failed to refresh token: " + response.code() + " - " + responseBody
                     );
                 }
 
                 JsonNode json = objectMapper.readTree(responseBody);
-                
+
                 String newAccessToken = json.get("access_token").asText();
-                String newRefreshToken = json.has("refresh_token") 
-                        ? json.get("refresh_token").asText() 
+                String newRefreshToken = json.has("refresh_token")
+                        ? json.get("refresh_token").asText()
                         : currentRefreshToken;
                 int expiresIn = json.get("expires_in").asInt();
                 long refreshTokenExpiresIn = json.get("x_refresh_token_expires_in").asLong();
@@ -108,6 +116,7 @@ public class OAuthService {
                 this.currentAccessToken = newAccessToken;
                 this.currentRefreshToken = newRefreshToken;
                 this.tokenExpiresAt = System.currentTimeMillis() + (expiresIn * 1000);
+                this.disconnectedAlertSent = false;
 
                 config.setAccessToken(newAccessToken);
                 config.setRefreshToken(newRefreshToken);
@@ -127,10 +136,21 @@ public class OAuthService {
             }
         } catch (IOException e) {
             log.error("Network error during token refresh: {}", e.getMessage());
+            alertOnce("Network error during token refresh: " + e.getMessage());
             throw new QuickBooksException("Network error during token refresh", e);
+        } catch (QuickBooksException e) {
+            throw e;
         } catch (Exception e) {
             log.error("Unexpected error during token refresh: {}", e.getMessage());
+            alertOnce("Unexpected error during token refresh: " + e.getMessage());
             throw new QuickBooksException("Failed to refresh access token", e);
+        }
+    }
+
+    private void alertOnce(String reason) {
+        if (!disconnectedAlertSent) {
+            disconnectedAlertSent = true;
+            alertService.sendQuickBooksDisconnectedAlert(reason);
         }
     }
 
@@ -146,8 +166,32 @@ public class OAuthService {
         return (tokenExpiresAt - System.currentTimeMillis()) / 1000;
     }
 
+    /**
+     * Cheap, local-only check: is there a refresh token cached at all. Does not verify Intuit
+     * still accepts it — a revoked/expired token still reads as "connected" here. Use
+     * {@link #verifyConnection()} when the answer needs to be trustworthy.
+     */
     public boolean isConnected() {
         return hasRefreshToken();
+    }
+
+    /**
+     * Forces a round-trip to Intuit's token endpoint to confirm the stored refresh token is
+     * still actually accepted, instead of just checking that a token string is cached locally.
+     * Suitable for health checks / monitoring; not for the hot path, since it triggers a token
+     * refresh (and rotation) on every call.
+     */
+    public boolean verifyConnection() {
+        if (!hasRefreshToken()) {
+            return false;
+        }
+        try {
+            forceRefresh();
+            return true;
+        } catch (QuickBooksException e) {
+            log.warn("QuickBooks connection check failed: {}", e.getMessage());
+            return false;
+        }
     }
 
     public synchronized String buildAuthorizationUrl() {
@@ -204,6 +248,7 @@ public class OAuthService {
                 this.currentAccessToken = newAccessToken;
                 this.currentRefreshToken = newRefreshToken;
                 this.tokenExpiresAt = System.currentTimeMillis() + (expiresIn * 1000L);
+                this.disconnectedAlertSent = false;
 
                 config.setAccessToken(newAccessToken);
                 config.setRefreshToken(newRefreshToken);

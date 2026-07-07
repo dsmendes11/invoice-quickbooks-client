@@ -168,31 +168,39 @@ the full response body and this service's own logs (correlate by timestamp).
 ## 5. Timeouts and retries — what to expect on your side
 
 Each document creation runs as a Temporal workflow with its own internal retries against
-QuickBooks (idempotent customer lookup: up to 5 attempts; document creation: up to 3
-attempts; each with exponential backoff). That means:
+QuickBooks: the customer find-or-create step retries up to 5 times (2s/4s/8s/16s backoff,
+30s timeout per attempt) and, only if that succeeds, the document-creation step retries up
+to 3 times (3s/6s/12s backoff, 45s timeout per attempt). That means:
 
 - A **successful** call typically completes in well under a second.
-- A call that hits **transient** QuickBooks/network errors can take up to roughly a minute
-  before this service gives up and returns `502` — the retries happen server-side, you don't
-  need your own retry-on-5xx logic for transient failures, though it doesn't hurt to have one
-  with a sane cap.
-- Set your HTTP client timeout to **at least 60s** for this endpoint to avoid client-side
+- A call that hits **transient** QuickBooks/network errors can take **up to ~2 minutes**
+  in the worst case (both steps timing out on every attempt) before this service gives up
+  and returns `502` — the retries happen server-side, you don't need your own retry-on-5xx
+  logic for transient failures, though it doesn't hurt to have one with a sane cap.
+- Set your HTTP client timeout to **at least 120s** for this endpoint to avoid client-side
   timeouts racing the server-side retry loop.
+- A client-side timeout does **not** mean the request failed server-side — see §6 before
+  deciding whether it's safe to retry.
 
-## 6. Idempotency — read before wiring up retries on your side
+## 6. Idempotency
 
-**This endpoint is not idempotent.** There is no request/idempotency key. If your caller
-retries a `POST /documents` after a timeout or a `502`, and the first attempt actually
-succeeded on the QuickBooks side, you will create a **duplicate** invoice/receipt.
-The customer *lookup* step is naturally idempotent (same email/name resolves to the same
-QuickBooks customer), but document creation itself is not deduplicated by `serviceId`/
-`productId`/`refundId` — those only affect the doc *number* string, they aren't checked
-against existing documents before creating a new one.
+**Repeating an already-completed request is safe.** Document creation is keyed internally
+by `(type, serviceId)` for `INVOICE`, `(type, productId)` for `SALES_RECEIPT`, or
+`(type, productId, refundId)` for `REFUND_RECEIPT`. If a document already exists for that
+key, a repeat `POST /documents` with the same key returns the **existing** document
+(same `201`, no new QuickBooks call, no duplicate) instead of creating a second one. This
+is what makes "retry after timeout/502" generally safe — reuse the same `serviceId`/
+`productId`/`refundId` on retry and, if the original attempt actually succeeded, you get
+the original document back.
 
-**Practical guidance:** only retry on `401` (fix header) or a clear pre-flight `400` you can
-correct. Do not blindly retry on `502`/`500`/timeout without checking (e.g. via your own
-QuickBooks read access, or asking the icligo team to check) whether the original request
-actually landed.
+**The one gap:** this only covers *retries of a request that already finished*. If two
+requests for the same brand-new key race each other within the same few hundred milliseconds
+(before either has been persisted), both can reach QuickBooks and one of them will fail —
+surfaced as `502` for the loser, not `409`, since the failure happens inside the Temporal
+workflow (see §4). This is a narrow window and not a concern for sequential retries; it
+mainly matters if your own service could plausibly fire two near-simultaneous requests for
+the same `serviceId`/`productId`/`refundId` (e.g. a double-click or a duplicate queue
+message) — in that case, dedupe on your side before calling, if you can.
 
 ## 7. Getting your `auth-token` value
 

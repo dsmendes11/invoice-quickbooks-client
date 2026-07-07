@@ -87,11 +87,17 @@ public class QuickBooksOAuthController {
                 .body("QuickBooks account disconnected.");
     }
 
+    /**
+     * Forces a real round-trip to Intuit (token refresh) rather than just checking that a
+     * refresh token string is cached, so monitoring can alert on the actual connection state
+     * instead of a false "connected" — see docs/OPERATIONS.md §4.
+     */
     @GetMapping("/launch")
     public ResponseEntity<String> launch() {
-        String status = oAuthService.isConnected() ? "connected" : "not connected";
-        return ResponseEntity.ok()
+        boolean connected = oAuthService.verifyConnection();
+        HttpStatus status = connected ? HttpStatus.OK : HttpStatus.SERVICE_UNAVAILABLE;
+        return ResponseEntity.status(status)
                 .contentType(MediaType.TEXT_PLAIN)
-                .body("Invoice QuickBooks Service is running (" + status + ").");
+                .body("Invoice QuickBooks Service is running (" + (connected ? "connected" : "not connected") + ").");
     }
 }

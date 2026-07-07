@@ -42,6 +42,7 @@ spring:
     data:
         mongodb:
             uri: mongodb://root:rootpassword@localhost:27017/quickbooks?authSource=admin&waitQueueMultiple=1000
+            auto-index-creation: true
 
 quickbooks:
     api:
@@ -54,6 +55,16 @@ quickbooks:
         refresh-token: RT1-11-H0-1780684841cryhsyqyipdosd45nikj
     oauth:
         redirect-uri: https://api.icligo.com/quickbooks/callback
+        connect-uri: https://api.icligo.com/quickbooks/connect
+
+# ─── Mailjet (admin alerts) ──────────────────────────────────────────────────
+mailjet:
+    send-enabled: true
+    public-key: ${MAILJET_PUBLIC_KEY:}
+    private-key: ${MAILJET_PRIVATE_KEY:}
+    from-email: no-reply@icligo.com
+    from-name: Invoice QuickBooks Service
+    admin-email: diogomendes@icligo.com
 
 # ─── Temporal ────────────────────────────────────────────────────────────────
 temporal:

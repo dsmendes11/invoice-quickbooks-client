@@ -1,5 +1,6 @@
 package com.icligo.quickbooks.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonView;
 import com.icligo.quickbooks.model.document.ClientInvoiceInfo;
@@ -12,6 +13,7 @@ import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import org.springframework.data.annotation.Id;
+import org.springframework.data.mongodb.core.index.Indexed;
 import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.util.List;
@@ -82,6 +84,17 @@ public class QuickBooksDocument {
     @Schema(description = "Required when type=REFUND_RECEIPT. Used to build the QuickBooks doc number and the "
             + "Temporal workflow id.", example = "rfd-9931")
     private String refundId;
+
+    /**
+     * Server-computed idempotency key, e.g. "INVOICE:48213" or "REFUND_RECEIPT:70021:rfd-9931".
+     * A unique index on this field is what turns a repeated create request into a no-op that
+     * returns the original document instead of creating a duplicate in QuickBooks.
+     * Internal only — never accepted from or shown to API callers.
+     */
+    @JsonIgnore
+    @Schema(hidden = true)
+    @Indexed(unique = true)
+    private String naturalKey;
 
     /**
      * Returns the microsite value, defaulting to "icligo" when not set.
