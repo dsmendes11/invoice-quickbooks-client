@@ -29,6 +29,9 @@ public class ApplicationConfig {
     @Value("${quickbooks.api.refresh-token}")
     private String refreshToken;
 
+    @Value("${quickbooks.oauth.redirect-uri}")
+    private String redirectUri;
+
     @Value("${quickbooks.api.connect-timeout:30000}")
     private int connectTimeout;
 
@@ -49,18 +52,21 @@ public class ApplicationConfig {
                     .clientSecret(clientSecret)
                     .accessToken(accessToken)
                     .refreshToken(refreshToken)
+                    .redirectUri(redirectUri)
                     .connectTimeout(connectTimeout)
                     .readTimeout(readTimeout)
                     .writeTimeout(writeTimeout)
                     .build();
         }else{
+            StoredTokens stored = tokens.getFirst();
             return QuickBooksConfig.builder()
                     .baseUrl(baseUrl)
-                    .realmId(realmId)
+                    .realmId(stored.getRealmId() != null ? stored.getRealmId() : realmId)
                     .clientId(clientId)
                     .clientSecret(clientSecret)
-                    .accessToken(tokens.getFirst().getAccessToken())
-                    .refreshToken(tokens.getFirst().getRefreshToken())
+                    .accessToken(stored.getAccessToken())
+                    .refreshToken(stored.getRefreshToken())
+                    .redirectUri(redirectUri)
                     .connectTimeout(connectTimeout)
                     .readTimeout(readTimeout)
                     .writeTimeout(writeTimeout)

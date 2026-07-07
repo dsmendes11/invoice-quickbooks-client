@@ -1,0 +1,13 @@
+target/
+*.class
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Claude Code local config
+.claude/
+
+# OS
+.DS_Store

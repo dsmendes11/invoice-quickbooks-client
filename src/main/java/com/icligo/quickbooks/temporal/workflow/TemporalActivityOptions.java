@@ -27,7 +27,7 @@ public final class TemporalActivityOptions {
                     .setBackoffCoefficient(2.0)
                     .setMaximumInterval(Duration.ofSeconds(30))
                     .setMaximumAttempts(5)
-                    .addDoNotRetry(
+                    .setDoNotRetry(
                             // Don't retry on validation / business logic errors
                             IllegalArgumentException.class.getName()
                     )
@@ -42,7 +42,7 @@ public final class TemporalActivityOptions {
                     .setBackoffCoefficient(2.0)
                     .setMaximumInterval(Duration.ofSeconds(60))
                     .setMaximumAttempts(3)
-                    .addDoNotRetry(
+                    .setDoNotRetry(
                             IllegalArgumentException.class.getName()
                     )
                     .build())

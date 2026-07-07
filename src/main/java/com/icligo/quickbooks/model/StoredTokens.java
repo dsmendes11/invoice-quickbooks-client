@@ -19,4 +19,5 @@ public class StoredTokens {
     private String refreshToken;
     private int expiresIn;
     private long refreshTokenExpiresIn;
+    private String realmId;
 }

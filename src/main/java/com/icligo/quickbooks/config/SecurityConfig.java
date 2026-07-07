@@ -65,6 +65,10 @@ public class SecurityConfig {
             corsSpec.configurationSource(source);
         });
         http.authorizeHttpRequests(authorize -> authorize
+                        .requestMatchers(mvc.pattern("/quickbooks/connect"), mvc.pattern("/quickbooks/callback")).permitAll()
+                        .requestMatchers(mvc.pattern("/v3/api-docs"), mvc.pattern("/v3/api-docs/**"),
+                                mvc.pattern("/swagger-ui/**"), mvc.pattern("/swagger-ui.html")).permitAll()
+                        .requestMatchers(mvc.pattern("/quickbooks/**")).authenticated()
                         .requestMatchers(mvc.pattern(basePath + "/**")).authenticated())
                 .oauth2ResourceServer(oauth2 -> oauth2
                         .authenticationManagerResolver(tokenAuthenticationManagerResolver)

@@ -13,6 +13,7 @@ public class QuickBooksConfig {
     private String clientSecret;
     private String accessToken;
     private String refreshToken;
+    private String redirectUri;
 
     @Builder.Default
     private int connectTimeout = 30000;
