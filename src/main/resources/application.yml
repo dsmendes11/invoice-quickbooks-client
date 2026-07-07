@@ -54,8 +54,8 @@ quickbooks:
         access-token: eyJhbGciOiJkaXIiLCJlbmMiOiJBMTI4Q0JDLUhTMjU2IiwieC5vcmciOiJIMCJ9..C9hsW_Gh-lnaEycei95ZeQ.c58ymRq_7U5hBMR4bQfxC2cBWrBazA-9_ZPPf7gwP69XgIQevscUtOrcNxE7rzOq2x1l_fGl1s_e0-u5AnJUtrYOPhlaKusxmpU8Ia7s5BHdBURgn4jTEHE4iP_lxx8-20v1TN3sZhtunSlTAZ_JbPs5EAdkoPBA-Z37YUhGxqmtn98HQRUsJP7zslL7Xy7fNQ4mLY72_nBpmilR89HA6FGia3Ow-ROXlldPTC8kKV8D7-lYWi8Q2uVrGXnebnWOOKARy9KG0xZ_X7vboISKlJ2T-5LNWVjJBy9nBS9_otXjUvRDWOir2N2tBqXzCx8aOkBeNWFEGTbls-X8pOiJgHLmyuI5RmO0NYvGvjTh2q9_zwuV0kD5Qs_qQRGVAX0_gvXgmZzuZftzQw4REY-H72yO67tDsQ_xYV5fh3unH9sus9AOpK0ZpMPLH2QBGQYakq1-GummN02uflXca7xuAZOuafaJILL8rTrmTeU7alY.yXdx1AKieCr1AaaXu2MoJQ
         refresh-token: RT1-11-H0-1780684841cryhsyqyipdosd45nikj
     oauth:
-        redirect-uri: https://api.icligo.com/quickbooks/callback
-        connect-uri: https://api.icligo.com/quickbooks/connect
+        redirect-uri: https://invoices.icligo.com/quickbooks/callback
+        connect-uri: https://invoices.icligo.com/quickbooks/connect
 
 # ─── Mailjet (admin alerts) ──────────────────────────────────────────────────
 mailjet:

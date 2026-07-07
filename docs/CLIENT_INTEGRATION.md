@@ -13,7 +13,7 @@ per-type payload rules, error semantics, and latency/retry expectations.
 | Environment | URL |
 |---|---|
 | Local dev | `http://localhost:9191` |
-| Production | `https://api.icligo.com` *(confirm with the team that owns the ingress — this is inferred from the QuickBooks OAuth redirect URI, not a dedicated deploy config)* |
+| Production | `https://invoices.icligo.com` |
 
 All business endpoints are under `${api.base-path}` = `/invoice-quickbooks-service/v1`.
 
@@ -84,7 +84,7 @@ Used to find-or-create the QuickBooks customer (matched by email/name).
 
 **Invoice:**
 ```bash
-curl -X POST https://api.icligo.com/invoice-quickbooks-service/v1/documents \
+curl -X POST https://invoices.icligo.com/invoice-quickbooks-service/v1/documents \
   -H "auth-token: $AUTH_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -105,7 +105,7 @@ curl -X POST https://api.icligo.com/invoice-quickbooks-service/v1/documents \
 
 **Sales receipt** (paid at time of sale — needs `productId` + `paymentMethod` instead of `serviceId`):
 ```bash
-curl -X POST https://api.icligo.com/invoice-quickbooks-service/v1/documents \
+curl -X POST https://invoices.icligo.com/invoice-quickbooks-service/v1/documents \
   -H "auth-token: $AUTH_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -119,7 +119,7 @@ curl -X POST https://api.icligo.com/invoice-quickbooks-service/v1/documents \
 
 **Refund receipt** (also needs `refundId`):
 ```bash
-curl -X POST https://api.icligo.com/invoice-quickbooks-service/v1/documents \
+curl -X POST https://invoices.icligo.com/invoice-quickbooks-service/v1/documents \
   -H "auth-token: $AUTH_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
