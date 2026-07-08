@@ -11,3 +11,6 @@ target/
 
 # OS
 .DS_Store
+
+# Local secrets for docker-compose
+.env
