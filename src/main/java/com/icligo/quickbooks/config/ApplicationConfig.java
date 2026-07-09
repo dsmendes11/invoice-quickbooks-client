@@ -5,6 +5,7 @@ import com.icligo.quickbooks.util.QuickBooksConfig;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 
 import java.util.List;
 
@@ -41,7 +42,13 @@ public class ApplicationConfig {
     @Value("${quickbooks.api.write-timeout:30000}")
     private int writeTimeout;
 
+    /**
+     * The sandbox/write-target connection. Marked {@code @Primary} so existing unqualified
+     * {@code QuickBooksConfig} injections keep resolving to this bean once a second
+     * (production, read-only) bean is registered by {@link QuickBooksProdConfig}.
+     */
     @Bean
+    @Primary
     public QuickBooksConfig quickBooksConfig(StoredTokensRepository storedTokensRepository) {
         List<StoredTokens> tokens = storedTokensRepository.findAll();
         if (tokens.isEmpty()) {

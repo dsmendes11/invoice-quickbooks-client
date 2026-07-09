@@ -56,6 +56,16 @@ quickbooks:
     oauth:
         redirect-uri: https://invoices.icligo.com/quickbooks/callback
         connect-uri: https://invoices.icligo.com/quickbooks/connect
+    # ─── Production connection: READ-ONLY source for the sandbox-copy feature ────
+    # No defaults on purpose — must be provided via environment variables so a
+    # production credential is never checked into source control.
+    prod:
+        base-url: https://quickbooks.api.intuit.com
+        realm-id: ${QUICKBOOKS_PROD_REALM_ID:}
+        client-id: ${QUICKBOOKS_PROD_CLIENT_ID:}
+        client-secret: ${QUICKBOOKS_PROD_CLIENT_SECRET:}
+        access-token: ${QUICKBOOKS_PROD_ACCESS_TOKEN:}
+        refresh-token: ${QUICKBOOKS_PROD_REFRESH_TOKEN:}
 
 # ─── Mailjet (admin alerts) ──────────────────────────────────────────────────
 mailjet:

@@ -102,7 +102,7 @@ public class QuickBooksDocument {
      */
     public String getMicrosite() {
         if (microsite == null) {
-            return "icligousa";
+            return "icligous";
         }
         return microsite;
     }
