@@ -22,6 +22,12 @@
         <okhttp.version>4.12.0</okhttp.version>
         <temporal.version>1.23.2</temporal.version>
         <lombok.version>1.18.38</lombok.version>
+        <!-- Spring Boot 3.2.3 pins mockito 5.7.0 and, independently, byte-buddy 1.14.12 in its
+             own BOM entry — both predate JDK 23 support. ByteBuddy 1.15+ added it; bump both
+             (mockito's own POM would pull in a matching byte-buddy version on its own, but
+             Spring's BOM pins byte-buddy directly too and wins unless overridden here). -->
+        <mockito.version>5.17.0</mockito.version>
+        <byte-buddy.version>1.15.11</byte-buddy.version>
     </properties>
 
     <dependencies>

@@ -104,3 +104,53 @@ since they all go through the same method.
 If `MAILJET_PUBLIC_KEY`/`MAILJET_PRIVATE_KEY` aren't set in an environment, Mailjet rejects the
 send with 401 and the failure is logged and swallowed — it never blocks or fails the request
 that triggered it (a broken alert channel must not also break `/documents`).
+
+## 6. Booking (Reserva) invoices cancel prior Sales Receipts
+
+When an Invoice is created with `productType=Reserva`,
+[`CreateInvoiceWorkflowImpl`](../src/main/java/com/icligo/quickbooks/temporal/workflow/CreateInvoiceWorkflowImpl.java)
+calls [`SalesReceiptCancellationService`](../src/main/java/com/icligo/quickbooks/service/SalesReceiptCancellationService.java),
+which uses [`ActiveSalesReceiptFinder`](../src/main/java/com/icligo/quickbooks/service/ActiveSalesReceiptFinder.java)
+to find every Sales Receipt already on file for that `serviceId` (in our own Mongo, by
+`type`+`serviceId` — QuickBooks has no `serviceId` field to query by) that still has an open
+balance, and cancels each one in QuickBooks via a CreditMemo, since the booking invoice now
+supersedes what was originally billed as a prepaid sale.
+
+- **"Open balance"** = QuickBooks `TotalAmt` minus every Refund Receipt already on file for the
+  same `productId` — the same accounting `RefundReceiptAllocationService` (§7) uses, via the
+  same `ActiveSalesReceiptFinder`, so both flows agree on what "already refunded" means. A Sales
+  Receipt with nothing left open is skipped entirely (no CreditMemo).
+- The CreditMemo's lines mirror the original Sales Receipt's lines, scaled down proportionally
+  to the open balance (not one lump-sum line), so the credit's detail matches what was actually
+  sold.
+- **Best-effort, not transactional with the Invoice**: a failure cancelling one Sales Receipt
+  (e.g. one of its line Items no longer exists in QuickBooks) is caught per-receipt — it never
+  fails the Invoice creation, and doesn't stop other matching Sales Receipts from being
+  cancelled. Instead, it emails the admin (`sendCreditMemoCancellationFailedAlert`, same Mailjet
+  mechanism as §5) with the `serviceId`/`productId`/reason, since that Sales Receipt is left
+  open in QuickBooks and needs manual cancellation.
+
+## 7. Refunds are allocated across open Sales Receipts, not caller-specified
+
+`POST {api.base-path}/refunds` (see docs/CLIENT_INTEGRATION.md §4) is the **only** way to
+create a RefundReceipt — `POST /documents` rejects `type=RRT` outright
+(`QuickBooksDocumentValidator`). This mirrors the invoice-management-system's
+`createRefundInvoices`/NCA handling: the caller states a `serviceId` and an amount, and
+[`RefundReceiptAllocationService`](../src/main/java/com/icligo/quickbooks/service/RefundReceiptAllocationService.java)
+determines which Sales Receipts absorb it.
+
+- Uses the same [`ActiveSalesReceiptFinder`](../src/main/java/com/icligo/quickbooks/service/ActiveSalesReceiptFinder.java)
+  as §6 to find every Sales Receipt still open for the `serviceId`, then splits the requested
+  value across them proportionally to each one's open balance (last allocation absorbs the
+  rounding remainder). If the requested value is at least the total open balance, every open
+  Sales Receipt is fully consumed and the excess is silently ignored — never an error.
+- Each allocation becomes its own RefundReceipt via the normal `TemporalDocumentService.create`
+  path, so controlKey generation (`type + productId + "_rfd" + refundId + serie`), idempotency,
+  and QuickBooks creation are identical to any other RefundReceipt — just driven by the
+  allocation instead of a caller-supplied `productId`/`items`.
+- **Best-effort per allocation**, matching the reference implementation: a failure creating one
+  allocation's RefundReceipt (e.g. that Sales Receipt's Item no longer exists) doesn't stop the
+  other allocations in the same request — it emails the admin
+  (`sendRefundAllocationFailedAlert`, same Mailjet mechanism as §5) with the
+  `serviceId`/`productId`/`amount`/reason, since that portion of the refund needs to be handled
+  manually.

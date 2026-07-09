@@ -36,38 +36,48 @@ public class QuickBooksDocument {
             + "Ignored on request, populated on response.", accessMode = Schema.AccessMode.READ_ONLY)
     private Object invoice;
 
-    @Schema(description = "Caller identifier, defaults to \"icligousa\" when omitted.", example = "icligousa")
+    @Schema(description = "Caller identifier, defaults to \"icligous\" when omitted.", example = "icligous")
     private String microsite;
 
-    @Schema(description = "Not currently used by document creation. Accepted for forward-compatibility only.")
-    private String controlKey;
-
-    @Schema(description = "Not currently used by document creation. Accepted for forward-compatibility only.")
+    @Schema(description = "Current-year series, embedded in the internal controlKey (mirrors the "
+            + "invoice-management-system's \"serie\"). Server-computed — ignored on request, populated on response.",
+            accessMode = Schema.AccessMode.READ_ONLY)
     private String serie;
 
     @Schema(description = "Free-text memo, mapped to the QuickBooks document's customer memo.",
             example = "Booking #48213")
     private String description;
 
-    @Schema(description = "Required when type=INVOICE. Used to build the QuickBooks doc number (\"INV\"+serviceId) "
-            + "and the Temporal workflow id.", example = "48213")
+    @NotBlank(message = "serviceId is required")
+    @Schema(description = "Used to build the QuickBooks doc number (\"INV\"+serviceId) and the Temporal workflow "
+            + "id when type=INV. Required for every type regardless, for cross-type context — but only "
+            + "productId feeds into the internal controlKey.",
+            example = "48213", requiredMode = Schema.RequiredMode.REQUIRED)
     private String serviceId;
 
-    @Schema(description = "Required when type=SALES_RECEIPT or REFUND_RECEIPT. Used to build the QuickBooks doc "
-            + "number and the Temporal workflow id.", example = "70021")
+    @NotBlank(message = "productId is required")
+    @Schema(description = "Used to build the QuickBooks doc number when type=SRT/RRT, the "
+            + "Temporal workflow id, and the internal controlKey. Required for every type regardless, for "
+            + "cross-type context.",
+            example = "70021", requiredMode = Schema.RequiredMode.REQUIRED)
     private String productId;
 
-    @Schema(description = "Not currently used by document creation. Accepted for forward-compatibility only.")
+    @Schema(description = "Only meaningful when type=INV: if this is \"Reserva\" (booking), any Sales Receipts "
+            + "already on file for this serviceId are cancelled via CreditMemo (see docs/OPERATIONS.md). "
+            + "Any other value (or omitted) has no effect.", example = "Reserva")
     private String productType;
 
-    @Schema(description = "Document type to create.", allowableValues = {"INVOICE", "SALES_RECEIPT", "REFUND_RECEIPT"},
-            example = "INVOICE", requiredMode = Schema.RequiredMode.REQUIRED)
+    @Schema(description = "Document type to create — the abbreviated code, not the long-form name: "
+            + "INV=Invoice, SRT=SalesReceipt. RRT (RefundReceipt) is rejected here — refunds are "
+            + "allocation-driven, see POST {api.base-path}/refunds.", allowableValues = {"INV", "SRT"},
+            example = "INV", requiredMode = Schema.RequiredMode.REQUIRED)
     @NotBlank(message = "type is required")
     private String type;
 
-    @Schema(description = "Only used for SALES_RECEIPT/REFUND_RECEIPT. 1=credit_card, 2=debit_card, "
-            + "any other non-null value maps to \"other\". If omitted/null, no payment method is sent "
-            + "at all and QuickBooks applies the company's account default.", example = "1")
+    @Schema(description = "Only used for SRT/RRT. Every non-null value currently "
+            + "resolves to the QuickBooks PaymentMethod \"Credit Card\" (per-code mapping is not implemented "
+            + "yet); the request fails if that PaymentMethod doesn't exist in the company. If omitted/null, "
+            + "no payment method is sent at all and QuickBooks applies the company's account default.", example = "1")
     private Integer paymentMethod;
 
     @Schema(description = "Not currently used by document creation. Accepted for forward-compatibility only.")
@@ -78,24 +88,31 @@ public class QuickBooksDocument {
     @Valid
     private ClientInvoiceInfo clientInvoiceInfo;
 
-    @Schema(description = "Line items. Only `item` (description) and `value` (amount, qty is always 1) are "
-            + "currently sent to QuickBooks — `discount`/`tax`/`locator`/`itemDate` are accepted but not applied.")
+    @Schema(description = "Line items — required, at least one. Only `item` (description) and `value` (amount, "
+            + "qty is always 1) are currently sent to QuickBooks — `discount`/`tax`/`locator`/`itemDate` are "
+            + "accepted but not applied. Every `item` must match an existing QuickBooks Item name exactly, every "
+            + "`value` must be non-negative, and the total across all lines must be non-zero.",
+            requiredMode = Schema.RequiredMode.REQUIRED)
     private List<ItemDto> items;
 
-    @Schema(description = "Required when type=REFUND_RECEIPT. Used to build the QuickBooks doc number and the "
-            + "Temporal workflow id.", example = "rfd-9931")
+    @Schema(description = "Not applicable to POST /documents (type=RRT is rejected there). Set internally "
+            + "by RefundReceiptAllocationService when creating RefundReceipts via POST {api.base-path}/refunds.",
+            accessMode = Schema.AccessMode.READ_ONLY, example = "rfd-9931")
     private String refundId;
 
     /**
-     * Server-computed idempotency key, e.g. "INVOICE:48213" or "REFUND_RECEIPT:70021:rfd-9931".
-     * A unique index on this field is what turns a repeated create request into a no-op that
-     * returns the original document instead of creating a duplicate in QuickBooks.
-     * Internal only — never accepted from or shown to API callers.
+     * Server-computed idempotency key: {@code type + productId + suffix + serie} (e.g.
+     * "INV700202026" for productId=70020/serie=2026; suffix is {@code "_rfd" + refundId}
+     * for RRT, empty otherwise) — matches the invoice-management-system's own
+     * {@code checkAndCreateChaveControlo} exactly. A unique index on this field is what turns a
+     * repeated create request into a no-op that returns the original document instead of
+     * creating a duplicate in QuickBooks. Always built internally — never accepted from or
+     * shown to API callers.
      */
     @JsonIgnore
     @Schema(hidden = true)
     @Indexed(unique = true)
-    private String naturalKey;
+    private String controlKey;
 
     /**
      * Returns the microsite value, defaulting to "icligo" when not set.

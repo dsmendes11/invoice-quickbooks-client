@@ -19,8 +19,9 @@ import io.temporal.activity.ActivityMethod;
 public interface QuickBooksActivities {
 
     /**
-     * Find an existing customer by email + display name, or create a new one.
-     * Idempotent: if the customer already exists in MongoDB or QuickBooks it is returned as-is.
+     * Find an existing customer by an exact QuickBooks DisplayName match (name + dedup hash), or
+     * create a new one. Idempotent: the same name/address/country always resolves to the same
+     * DisplayName, so repeated calls return the existing customer instead of creating duplicates.
      */
     @ActivityMethod
     Customer findOrCreateCustomer(ClientInvoiceInfo clientInfo);
@@ -48,4 +49,13 @@ public interface QuickBooksActivities {
      */
     @ActivityMethod
     QuickBooksDocument saveDocument(QuickBooksDocument document);
+
+    /**
+     * Cancels, via CreditMemo, any Sales Receipts already on file for this {@code serviceId} —
+     * called when a booking (Reserva) Invoice is created for that service. Best-effort: never
+     * throws, so it never fails the Invoice-creation workflow that calls it; failures are logged
+     * and emailed to the admin instead (see {@code SalesReceiptCancellationService}).
+     */
+    @ActivityMethod
+    void cancelSalesReceiptsForBooking(String serviceId);
 }

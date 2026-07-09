@@ -9,10 +9,17 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * Cross-field validation for {@link com.icligo.quickbooks.model.QuickBooksDocument}:
- * enforces the fields required by each {@code type} (serviceId/productId/refundId) and the
- * "at least one customer identifier" rule that {@code CustomerService} otherwise only
- * discovers deep inside the Temporal workflow.
+ * Cross-field validation for {@link com.icligo.quickbooks.model.QuickBooksDocument}: enforces
+ * {@code type} (against {@link com.icligo.quickbooks.enums.SalesDocumentTypes} — the abbreviated
+ * codes INV/SRT/RRT, not the old long-form names) and {@code items} (against QuickBooks' own
+ * Items — see {@code QuickBooksDocumentValidator.validItems}). {@code type=RRT} (RefundReceipt)
+ * is rejected outright here: refunds are allocation-driven via {@code POST /refunds} (see
+ * {@link com.icligo.quickbooks.service.RefundReceiptAllocationService}), not caller-specified
+ * through this generic document-creation path. {@code serviceId}/{@code productId} are
+ * unconditionally required via plain {@code @NotBlank} on the fields themselves (every type
+ * needs both, for cross-type context — though only {@code productId} feeds into the internal
+ * controlKey), as is {@code clientInvoiceInfo} (name/address/country) via {@code @NotBlank} on
+ * {@link com.icligo.quickbooks.model.document.ClientInvoiceInfo}, cascaded by {@code @Valid}.
  */
 @Target(ElementType.TYPE)
 @Retention(RetentionPolicy.RUNTIME)

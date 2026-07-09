@@ -2,6 +2,7 @@ package com.icligo.quickbooks.model.document;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import io.swagger.v3.oas.annotations.media.Schema;
+import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
@@ -11,8 +12,8 @@ import lombok.NoArgsConstructor;
 @Data
 @NoArgsConstructor
 @JsonInclude(JsonInclude.Include.NON_NULL)
-@Schema(description = "Customer used to find-or-create the QuickBooks customer. At least one of "
-        + "name/email/address/country must be set.")
+@Schema(description = "Customer used to find-or-create the QuickBooks customer. name, address, and "
+        + "country are required.")
 public class ClientInvoiceInfo {
     @Schema(description = "QuickBooks customer id. Ignored on request, populated on response.",
             accessMode = Schema.AccessMode.READ_ONLY)
@@ -22,7 +23,8 @@ public class ClientInvoiceInfo {
             + "populated on response.", accessMode = Schema.AccessMode.READ_ONLY)
     String clientHash;
 
-    @Schema(example = "Jane Doe")
+    @NotBlank(message = "name is required")
+    @Schema(example = "Jane Doe", requiredMode = Schema.RequiredMode.REQUIRED)
     String name;
 
     @Schema(example = "jane.doe@example.com")
@@ -31,7 +33,8 @@ public class ClientInvoiceInfo {
     @Schema(example = "+351912345678")
     String phone;
 
-    @Schema(example = "Rua Example 123")
+    @NotBlank(message = "address is required")
+    @Schema(example = "Rua Example 123", requiredMode = Schema.RequiredMode.REQUIRED)
     String address;
 
     @Schema(example = "Lisboa")
@@ -40,8 +43,9 @@ public class ClientInvoiceInfo {
     @Schema(example = "1000-001")
     String zipCode;
 
-    @Schema(description = "Used as the QuickBooks BillAddr/ShipAddr country. Defaults to \"US\" when blank.",
-            example = "PT")
+    @NotBlank(message = "country is required")
+    @Schema(description = "Used as the QuickBooks BillAddr/ShipAddr country.",
+            example = "PT", requiredMode = Schema.RequiredMode.REQUIRED)
     String country;
 
     @Schema(description = "Not currently used by document creation. Accepted for forward-compatibility only.")

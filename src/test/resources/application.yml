@@ -1,0 +1,14 @@
+de:
+    flapdoodle:
+        mongodb:
+            embedded:
+                version: 6.0.4
+
+# NOTE: this test-classpath application.yml REPLACES (not merges with) src/main/resources/
+# application.yml for the test JVM, so anything the tests rely on from the main config —
+# like auto-index-creation, needed for the unique controlKey index to actually be created —
+# has to be repeated here.
+spring:
+    data:
+        mongodb:
+            auto-index-creation: true

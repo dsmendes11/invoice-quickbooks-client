@@ -1,8 +1,9 @@
 # Integrating with Invoice QuickBooks Service
 
-This service creates QuickBooks **invoices**, **sales receipts** and **refund receipts**
-on behalf of other icligo services. It talks to QuickBooks itself — callers never touch
-QuickBooks credentials or OAuth directly.
+This service creates QuickBooks **invoices** and **sales receipts**, and issues **refunds**
+against sales receipts, on behalf of other icligo services. It talks to QuickBooks itself —
+callers never touch QuickBooks credentials or OAuth directly. Refunds are **allocation-driven**
+(§4), not caller-specified: you state a `serviceId` and an amount, not a specific document.
 
 Interactive schema browser: **Swagger UI** at `/swagger-ui/index.html` (raw spec at
 `/v3/api-docs`). This document covers everything the Swagger UI doesn't: auth setup,
@@ -41,24 +42,37 @@ service** — client apps never see a QuickBooks token, only this one static hea
 
 ## 3. Create a document — `POST /invoice-quickbooks-service/v1/documents`
 
-One endpoint creates all three document types; `type` selects which.
+One endpoint creates Invoices and Sales Receipts; `type` selects which. **RefundReceipts
+cannot be created here** — `type=RRT` is rejected outright (`400`); see §4.
 
 ### 3.1 Common request fields
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `type` | string | **yes** | `INVOICE`, `SALES_RECEIPT`, or `REFUND_RECEIPT` (case-insensitive) |
+| `type` | string | **yes** | abbreviated code, not the long-form name: `INV` (Invoice) or `SRT` (SalesReceipt) (case-insensitive). `RRT` is rejected — refunds go through `POST /refunds` (§4) |
 | `clientInvoiceInfo` | object | **yes** | see below — customer is found-or-created automatically |
-| `serviceId` | string | required if `type=INVOICE` | becomes QuickBooks `DocNumber` = `"INV" + serviceId` |
-| `productId` | string | required if `type=SALES_RECEIPT` or `REFUND_RECEIPT` | becomes `DocNumber` = `"SRC"+productId` or `"RRC"+productId+"_rfd"+refundId` |
-| `refundId` | string | required if `type=REFUND_RECEIPT` | see above |
+| `serviceId` | string | **yes, for every type** | becomes QuickBooks `DocNumber` = `"INV" + serviceId` when `type=INV`; required for every type regardless, for cross-type context — does **not** feed into the internal `controlKey` (see §7). Also what `POST /refunds` matches Sales Receipts by |
+| `productId` | string | **yes, for every type** | becomes `DocNumber` = `"SRC"+productId` when `type=SRT`; required for every type regardless, and **is** the identifier used in the internal `controlKey` (see §7) |
 | `description` | string | no | mapped to the QuickBooks document's customer memo |
-| `microsite` | string | no | defaults to `"icligousa"` |
-| `paymentMethod` | integer | no | only used for `SALES_RECEIPT`/`REFUND_RECEIPT`. `1`→credit_card, `2`→debit_card, any other non-null value→`other`. Omitted/`null` → no payment method sent at all, QuickBooks applies the account default |
-| `items` | array | no | line items, see 3.3. Empty/omitted → document created with zero lines |
+| `microsite` | string | no | defaults to `"icligous"` |
+| `paymentMethod` | integer | no | only used for `SRT`. Every non-null value currently resolves to the QuickBooks PaymentMethod **"Credit Card"** (per-code mapping isn't implemented yet) — the request fails (`502`) if that PaymentMethod doesn't exist in the company. Omitted/`null` → no payment method sent at all, QuickBooks applies the account default. Carried over automatically onto any RefundReceipt `POST /refunds` later creates against this Sales Receipt |
+| `items` | array | **yes, at least one** | line items, see 3.3 — every `item` must match an existing QuickBooks Item name, values must be non-negative, and the total must be non-zero |
+| `productType` | string | no | only meaningful when `type=INV`: if `"Reserva"`, any Sales Receipts already on file for this `serviceId` are cancelled via CreditMemo (see docs/OPERATIONS.md §6). Any other value/omitted has no effect |
 
 Fields accepted but **not currently applied** to the QuickBooks document — safe to omit,
-don't rely on them: `controlKey`, `serie`, `productType`, `invoiceType`.
+don't rely on them: `invoiceType`.
+
+Every `SRT` document is also deposited into a fixed, server-configured QuickBooks Account
+(`DepositToAccountRef`, default **"1030 - Stripe/Paypal"**, configurable via
+`quickbooks.deposit.sales-refund-account-name` / `QUICKBOOKS_DEPOSIT_SALES_REFUND_ACCOUNT_NAME`)
+— this isn't a request field, it applies to every `SRT` request unconditionally (and to any
+RefundReceipt later created against it via §4), and the request fails (`502`) if that Account
+doesn't exist in the company. `INV` has no equivalent: QuickBooks' Invoice entity has no
+deposit-account field at all (only Payment/SalesReceipt/RefundReceipt support
+`DepositToAccountRef`; an invoice just posts to Accounts Receivable).
+
+`controlKey` and `serie` are server-computed and internal (see §7) — both are ignored if sent
+on a request; `serie` (but not `controlKey`) is populated back on the response.
 
 ### 3.2 `clientInvoiceInfo`
 
@@ -66,9 +80,8 @@ Used to find-or-create the QuickBooks customer (matched by email/name).
 
 | Field | Notes |
 |---|---|
-| `name`, `email`, `address`, `country` | **at least one of these four is required** — a request with all four blank fails validation |
-| `phone`, `city`, `zipCode` | optional, mapped to the customer's phone/billing address |
-| `country` | defaults to `"US"` in QuickBooks if blank |
+| `name`, `address`, `country` | **required** |
+| `email`, `phone`, `city`, `zipCode` | optional, mapped to the customer's email/phone/billing address |
 | `nif`, `clientCountry`, `finalCustomer` | accepted, not currently applied |
 | `clientId`, `clientHash` | **response-only** — ignore on request, this is how you get the resolved QuickBooks customer id back |
 
@@ -88,12 +101,14 @@ curl -X POST https://invoices.icligo.com/invoice-quickbooks-service/v1/documents
   -H "auth-token: $AUTH_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "type": "INVOICE",
+    "type": "INV",
     "serviceId": "48213",
+    "productId": "70021",
     "description": "Booking #48213",
     "clientInvoiceInfo": {
       "name": "Jane Doe",
       "email": "jane.doe@example.com",
+      "address": "Rua Example 123",
       "country": "PT"
     },
     "items": [
@@ -103,31 +118,18 @@ curl -X POST https://invoices.icligo.com/invoice-quickbooks-service/v1/documents
   }'
 ```
 
-**Sales receipt** (paid at time of sale — needs `productId` + `paymentMethod` instead of `serviceId`):
+**Sales receipt** (paid at time of sale — `paymentMethod` instead of relying on the QB default; `serviceId`/`productId` are both still required):
 ```bash
 curl -X POST https://invoices.icligo.com/invoice-quickbooks-service/v1/documents \
   -H "auth-token: $AUTH_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "type": "SALES_RECEIPT",
+    "type": "SRT",
+    "serviceId": "48213",
     "productId": "70021",
     "paymentMethod": 1,
-    "clientInvoiceInfo": { "name": "Jane Doe", "email": "jane.doe@example.com" },
+    "clientInvoiceInfo": { "name": "Jane Doe", "address": "Rua Example 123", "country": "PT", "email": "jane.doe@example.com" },
     "items": [ { "item": "Day tour", "value": 89.00 } ]
-  }'
-```
-
-**Refund receipt** (also needs `refundId`):
-```bash
-curl -X POST https://invoices.icligo.com/invoice-quickbooks-service/v1/documents \
-  -H "auth-token: $AUTH_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "type": "REFUND_RECEIPT",
-    "productId": "70021",
-    "refundId": "rfd-9931",
-    "clientInvoiceInfo": { "name": "Jane Doe", "email": "jane.doe@example.com" },
-    "items": [ { "item": "Day tour refund", "value": 89.00 } ]
   }'
 ```
 
@@ -135,10 +137,73 @@ curl -X POST https://invoices.icligo.com/invoice-quickbooks-service/v1/documents
 
 Same shape as the request, plus:
 - `id` — Mongo id of the saved record (use this if you need to look the document up later; there's no GET endpoint yet, only direct DB access)
-- `invoice` — the actual QuickBooks object (`Invoice`/`SalesReceipt`/`RefundReceipt`) with its QuickBooks `Id`, `TotalAmt`, `Balance`, etc.
+- `invoice` — the actual QuickBooks object (`Invoice`/`SalesReceipt`) with its QuickBooks `Id`, `TotalAmt`, `Balance`, etc.
 - `clientInvoiceInfo.clientId` / `clientHash` — the resolved QuickBooks customer id
 
-## 4. Error responses
+## 4. Refund a Sales Receipt — `POST /invoice-quickbooks-service/v1/refunds`
+
+RefundReceipts are **allocation-driven**, not caller-specified: you state a `serviceId` and
+an amount to refund, not a `productId`/`items`/which document. The service finds every Sales
+Receipt still open for that `serviceId` and allocates the requested value across them —
+mirroring the invoice-management-system's `createRefundInvoices`/NCA handling.
+
+### 4.1 Request fields
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `serviceId` | string | **yes** | matches the `serviceId` used when the original Sales Receipt(s) were created |
+| `refundId` | string | **yes** | identifies this refund transaction — embedded (as `"_rfd" + refundId`) in the `controlKey` of every RefundReceipt this call creates |
+| `value` | number | **yes, > 0** | total amount to refund, before allocation |
+
+### 4.2 Allocation behavior
+
+1. **"Open"** means: QuickBooks `TotalAmt` minus every RefundReceipt already created against
+   the same `productId` (via this endpoint or otherwise) is greater than zero. Sales Receipts
+   with nothing left to refund are excluded entirely.
+2. If no open Sales Receipts exist for `serviceId` → `400`.
+3. If `value` is **less than** the total open balance across all of them, it's split
+   **proportionally** to each one's remaining balance (rounding remainder absorbed by the last
+   allocation, so the sum always equals `value` exactly).
+4. If `value` is **greater than or equal to** the total open balance, every open Sales Receipt
+   is fully refunded and **the excess is silently ignored** — you will not get an error, and
+   you will not get back more RefundReceipts' worth than what was actually open.
+5. One RefundReceipt is created per Sales Receipt that received a non-zero allocation — so a
+   single call can create zero (nothing open), one, or several RefundReceipts.
+6. Each created RefundReceipt's line mirrors the original Sales Receipt's *first* item
+   (description) with the allocated amount as its value — not a proportional split across every
+   original line (contrast with the CreditMemo cancellation in docs/OPERATIONS.md §6, which
+   *does* split across all original lines; this endpoint intentionally follows the reference
+   implementation's simpler "first item" convention instead).
+
+### 4.3 Example
+
+```bash
+curl -X POST https://invoices.icligo.com/invoice-quickbooks-service/v1/refunds \
+  -H "auth-token: $AUTH_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "serviceId": "48213",
+    "refundId": "rfd-9931",
+    "value": 40.00
+  }'
+```
+
+### 4.4 Response — `200 OK`
+
+A JSON array of the created documents (same shape as §3.5) — **can be empty** if every
+allocation failed (see §4.5), or contain fewer entries than the number of open Sales Receipts
+if only some allocations succeeded.
+
+### 4.5 Partial failure is best-effort, not transactional
+
+If creating the RefundReceipt for one allocation fails (e.g. that Sales Receipt's Item no
+longer exists in QuickBooks), it does **not** stop the others in the same request — the
+response simply omits that one, and an admin is emailed the details (see
+docs/OPERATIONS.md §7) since that portion of the refund needs to be handled manually. Check
+whether the response array's length matches what you expected rather than assuming a `200`
+means every allocation succeeded.
+
+## 5. Error responses
 
 Every error returns a JSON body shaped like:
 
@@ -148,16 +213,16 @@ Every error returns a JSON body shaped like:
   "status": 400,
   "error": "Bad Request",
   "message": "Request failed validation",
-  "details": ["clientInvoiceInfo: clientInvoiceInfo is required", "serviceId: is required when type is INVOICE"]
+  "details": ["clientInvoiceInfo: clientInvoiceInfo is required", "serviceId: serviceId is required"]
 }
 ```
 
 | Status | Meaning | Retry? |
 |---|---|---|
 | `201` | Created | — |
-| `400` | Request failed validation — missing/invalid `type`, missing `clientInvoiceInfo`, missing `serviceId`/`productId`/`refundId` for the given `type`, or all four customer identifiers blank. `details` lists every violation. | No — fix the payload |
+| `400` | Request failed validation — missing/invalid `type`, `type=RRT` on `/documents` (§3), missing `clientInvoiceInfo`, missing `serviceId`/`productId` (required for every type), no open Sales Receipts / non-positive `value` on `/refunds` (§4), or missing `clientInvoiceInfo.name`/`address`/`country`. `details` lists every violation where applicable. | No — fix the payload |
 | `401` | Missing/wrong `auth-token` header | No — fix the header |
-| `502` | QuickBooks itself (or the Temporal workflow orchestrating the call) rejected or failed the request — e.g. invalid customer data QuickBooks itself rejects, QuickBooks API outage, or (currently) an expired/revoked QuickBooks OAuth connection on this service's side | Yes, with backoff — this is this service's/QuickBooks' problem, not the payload |
+| `502` | QuickBooks itself (or the Temporal workflow orchestrating the call) rejected or failed the request — e.g. invalid customer data QuickBooks itself rejects, QuickBooks API outage, an expired/revoked QuickBooks OAuth connection on this service's side, or (for `SRT`) the configured PaymentMethod/deposit-Account not existing in the company | Transient causes: yes, with backoff. A missing PaymentMethod/Account is a standing config problem in QuickBooks, not transient — retrying won't help until it's created there |
 | `500` | Unexpected internal error | Yes, with backoff |
 
 `message` is safe to log; don't parse it programmatically — branch on `status` only. The
@@ -165,7 +230,7 @@ Every error returns a JSON body shaped like:
 folded into `message`), so if you need the raw QuickBooks fault for support tickets, capture
 the full response body and this service's own logs (correlate by timestamp).
 
-## 5. Timeouts and retries — what to expect on your side
+## 6. Timeouts and retries — what to expect on your side
 
 Each document creation runs as a Temporal workflow with its own internal retries against
 QuickBooks: the customer find-or-create step retries up to 5 times (2s/4s/8s/16s backoff,
@@ -178,31 +243,46 @@ to 3 times (3s/6s/12s backoff, 45s timeout per attempt). That means:
   and returns `502` — the retries happen server-side, you don't need your own retry-on-5xx
   logic for transient failures, though it doesn't hurt to have one with a sane cap.
 - Set your HTTP client timeout to **at least 120s** for this endpoint to avoid client-side
-  timeouts racing the server-side retry loop.
-- A client-side timeout does **not** mean the request failed server-side — see §6 before
+  timeouts racing the server-side retry loop. `POST /refunds` can create multiple documents
+  sequentially, so budget accordingly if several Sales Receipts are open for a `serviceId`.
+- A client-side timeout does **not** mean the request failed server-side — see §7 before
   deciding whether it's safe to retry.
 
-## 6. Idempotency
+## 7. Idempotency
 
-**Repeating an already-completed request is safe.** Document creation is keyed internally
-by `(type, serviceId)` for `INVOICE`, `(type, productId)` for `SALES_RECEIPT`, or
-`(type, productId, refundId)` for `REFUND_RECEIPT`. If a document already exists for that
-key, a repeat `POST /documents` with the same key returns the **existing** document
-(same `201`, no new QuickBooks call, no duplicate) instead of creating a second one. This
-is what makes "retry after timeout/502" generally safe — reuse the same `serviceId`/
-`productId`/`refundId` on retry and, if the original attempt actually succeeded, you get
-the original document back.
+**Repeating an already-completed request is safe.** Document creation is keyed internally by
+a server-computed `controlKey` = `type + productId + suffix + serie`, where `suffix` is
+`"_rfd" + refundId` for `RRT` (empty otherwise) and `serie` is the **current
+year** — this matches the invoice-management-system's own `checkAndCreateChaveControlo`
+exactly, and applies identically whether a RefundReceipt was created via `POST /refunds`'
+allocation logic or (internally) any other path. Note that **`serviceId` is not part of the
+key** — even though it's required on every request (for cross-type context), only
+`productId` drives idempotency matching. `controlKey` and `serie` are always computed
+server-side; you cannot set or influence them from the request. If a document already exists
+for that key, a repeat request with the same `type`/`productId`[/`refundId`] returns the
+**existing** document (same status code, no new QuickBooks call, no duplicate) instead of
+creating a second one — regardless of what `serviceId` is sent. This is what makes "retry
+after timeout/502" generally safe — reuse the same `productId`/`refundId` on retry and, if
+the original attempt actually succeeded, you get the original document back. For `POST
+/refunds`, this means retrying with the same `serviceId`/`refundId`/`value` re-runs the same
+allocation and hits the same per-Sales-Receipt controlKeys, so already-created RefundReceipts
+come back as-is rather than duplicating.
+
+**Year boundary:** because `serie` is embedded in the key, a repeat of the same `productId`
+in a **following calendar year** is treated as a brand-new document, not a replay — it will
+create a second QuickBooks document. This only matters if you retry a request across a year
+boundary (e.g. a request from Dec 31 retried on Jan 1); same-year retries are unaffected.
 
 **The one gap:** this only covers *retries of a request that already finished*. If two
 requests for the same brand-new key race each other within the same few hundred milliseconds
 (before either has been persisted), both can reach QuickBooks and one of them will fail —
 surfaced as `502` for the loser, not `409`, since the failure happens inside the Temporal
-workflow (see §4). This is a narrow window and not a concern for sequential retries; it
+workflow (see §5). This is a narrow window and not a concern for sequential retries; it
 mainly matters if your own service could plausibly fire two near-simultaneous requests for
 the same `serviceId`/`productId`/`refundId` (e.g. a double-click or a duplicate queue
 message) — in that case, dedupe on your side before calling, if you can.
 
-## 7. Getting your `auth-token` value
+## 8. Getting your `auth-token` value
 
 The value lives in this service's `application.yml` (`spring.application.tokenValue`) —
 ask whoever manages that deployment for the current value rather than reading it out of a

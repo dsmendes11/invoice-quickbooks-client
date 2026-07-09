@@ -126,58 +126,62 @@ public class CustomerService extends QuickBooksClient {
         }
     }
 
+    /**
+     * Finds the QuickBooks customer for this request, or creates it.
+     *
+     * <p>The match is a direct, exact QuickBooks query on {@code DisplayName = name + " " + hash},
+     * where {@code hash} is the deterministic dedup hash of name/address/country (see
+     * {@link #generateCustomerId}). Because the hash is appended to every DisplayName we create,
+     * this lookup is authoritative on its own — the same real-world customer always produces the
+     * same DisplayName, and QuickBooks enforces DisplayName uniqueness for us.
+     */
     public Customer findOrCreateCustomerByEmailAndName(ClientInvoiceInfo clientInfo)
             throws QuickBooksException {
-        String email = (clientInfo != null) ? clientInfo.getEmail() : null;
         String address = (clientInfo != null) ? clientInfo.getAddress() : null;
         String name = (clientInfo != null) ? clientInfo.getName() : null;
         String country = (clientInfo != null) ? clientInfo.getCountry() : null;
 
-        if ((email == null || email.trim().isEmpty()) &&
-                (address == null || address.trim().isEmpty()) &&
-                (name == null || name.trim().isEmpty())&&
-                (country == null || country.trim().isEmpty())) {
-            throw new QuickBooksException("Failed to create customer: " + name);
+        if (isBlank(name) || isBlank(address) || isBlank(country)) {
+            throw new QuickBooksException("Failed to create customer: name, address, and country are required");
         }
 
-        try {
-            String hashId = generateCustomerId(name, address, country);
-            Customer customer = customerRepository.findByNotes(hashId);
-            if (customer != null) {
-                return customer;
-            }
+        String hashId = generateCustomerId(name, address, country);
+        String displayName = buildDisplayName(name, hashId);
 
-            String searchQuery = buildCombinedSearchQuery(email, name);
-            if (searchQuery != null) {
-                List<Customer> results = query(searchQuery);
-                if (!results.isEmpty()) {
-                    return results.getFirst();
-                }
-            }
-
-            return createCustomerFromClientInfo(hashId, clientInfo);
-
-        } catch (QuickBooksException e) {
-            log.error("Error searching/creating customer: {}", e.getMessage());
-            try {
-                String hashId = generateCustomerId(name, address, country);
-                return createCustomerFromClientInfo(hashId, clientInfo);
-            } catch (QuickBooksException createEx) {
-                log.error("Failed to create customer: {}", createEx.getMessage());
-                throw new QuickBooksException("Failed to create customer: " + name, createEx);
-            }
+        Customer existing = findByDisplayName(displayName);
+        if (existing != null) {
+            return existing;
         }
+
+        return createCustomerFromClientInfo(hashId, displayName, clientInfo);
     }
 
-    private Customer createCustomerFromClientInfo(String customerHash, ClientInvoiceInfo clientInfo)
+    private Customer findByDisplayName(String displayName) throws QuickBooksException {
+        String escaped = displayName.replace("'", "\\'");
+        List<Customer> results = query("SELECT * FROM Customer WHERE DisplayName = '" + escaped + "' MAXRESULTS 1");
+        return results.isEmpty() ? null : results.getFirst();
+    }
+
+    private String buildDisplayName(String name, String hashId) {
+        return baseName(name) + " " + hashId;
+    }
+
+    private String baseName(String name) {
+        return (name != null && !name.trim().isEmpty()) ? name.trim() : "Customer";
+    }
+
+    private static boolean isBlank(String value) {
+        return value == null || value.trim().isEmpty();
+    }
+
+    private Customer createCustomerFromClientInfo(String customerHash, String displayName, ClientInvoiceInfo clientInfo)
             throws QuickBooksException {
 
-        String displayName = (clientInfo != null && clientInfo.getName() != null)
-                ? clientInfo.getName()
-                : "Customer";
+        String printOnCheckName = baseName(clientInfo != null ? clientInfo.getName() : null);
 
         Customer.CustomerBuilder builder = Customer.builder()
                 .displayName(displayName)
+                .printOnCheckName(printOnCheckName)
                 .companyName(clientInfo != null ? clientInfo.getName() : null);
 
         if (clientInfo != null && clientInfo.getEmail() != null && !clientInfo.getEmail().trim().isEmpty()) {
@@ -213,24 +217,6 @@ public class CustomerService extends QuickBooksClient {
             log.error("Failed to create customer: {}", e.getMessage());
             throw new QuickBooksException("Failed to create customer: " + displayName, e);
         }
-    }
-
-    private String buildCombinedSearchQuery(String email, String name) {
-        List<String> conditions = new ArrayList<>();
-
-        if (email != null && !email.trim().isEmpty()) {
-            conditions.add(String.format("PrimaryEmailAddr = '%s'", email.replace("'", "\\'")));
-        }
-
-        if (name != null && !name.trim().isEmpty()) {
-            conditions.add(String.format("DisplayName LIKE '%%%s%%'", name.replace("'", "\\'")));
-        }
-
-        if (conditions.isEmpty()) {
-            return null;
-        }
-
-        return "SELECT * FROM Customer WHERE " + String.join(" AND ", conditions) + " MAXRESULTS 5";
     }
 
     public static String generateCustomerId(String name, String address, String country) throws QuickBooksException {

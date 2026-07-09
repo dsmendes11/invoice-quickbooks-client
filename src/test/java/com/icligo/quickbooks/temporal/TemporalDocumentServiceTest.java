@@ -8,6 +8,7 @@ import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowOptions;
 import org.junit.jupiter.api.Test;
 
+import java.time.Year;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -26,17 +27,19 @@ class TemporalDocumentServiceTest {
     void idempotentReplayReturnsExistingDocumentWithoutStartingAWorkflow() {
         QuickBooksDocument existing = new QuickBooksDocument();
         existing.setId("existing-id");
-        when(documentRepository.findByNaturalKey("INVOICE:48213")).thenReturn(Optional.of(existing));
+        when(documentRepository.findByControlKey(expectedControlKey("INV", "70021", "")))
+                .thenReturn(Optional.of(existing));
 
-        QuickBooksDocument result = service.create(invoiceRequest("48213"));
+        QuickBooksDocument result = service.create(invoiceRequest("48213", "70021"));
 
         assertThat(result.getId()).isEqualTo("existing-id");
         verifyNoInteractions(workflowClient);
     }
 
     @Test
-    void newRequestStartsWorkflowAndTagsTheDocumentWithItsNaturalKey() {
-        when(documentRepository.findByNaturalKey("INVOICE:48213")).thenReturn(Optional.empty());
+    void newRequestStartsWorkflowAndTagsTheDocumentWithItsControlKey() {
+        when(documentRepository.findByControlKey(expectedControlKey("INV", "70021", "")))
+                .thenReturn(Optional.empty());
 
         CreateInvoiceWorkflow workflowStub = mock(CreateInvoiceWorkflow.class);
         QuickBooksDocument created = new QuickBooksDocument();
@@ -45,19 +48,36 @@ class TemporalDocumentServiceTest {
         when(workflowClient.newWorkflowStub(eq(CreateInvoiceWorkflow.class), any(WorkflowOptions.class)))
                 .thenReturn(workflowStub);
 
-        QuickBooksDocument request = invoiceRequest("48213");
+        QuickBooksDocument request = invoiceRequest("48213", "70021");
         QuickBooksDocument result = service.create(request);
 
         assertThat(result.getId()).isEqualTo("new-id");
-        assertThat(request.getNaturalKey()).isEqualTo("INVOICE:48213");
+        assertThat(request.getControlKey()).isEqualTo(expectedControlKey("INV", "70021", ""));
+        assertThat(request.getSerie()).isEqualTo(String.valueOf(Year.now().getValue()));
         verify(workflowStub).execute(request);
+    }
+
+    @Test
+    void controlKeyIgnoresServiceIdAndOnlyDependsOnProductId() {
+        QuickBooksDocument existing = new QuickBooksDocument();
+        existing.setId("existing-id");
+        when(documentRepository.findByControlKey(expectedControlKey("INV", "70021", "")))
+                .thenReturn(Optional.of(existing));
+
+        // Same productId, different serviceId — still matches the same controlKey (serviceId
+        // is required for context, per the corrected formula it does not feed into the key).
+        QuickBooksDocument result = service.create(invoiceRequest("different-service-id", "70021"));
+
+        assertThat(result.getId()).isEqualTo("existing-id");
+        verifyNoInteractions(workflowClient);
     }
 
     @Test
     void missingClientInvoiceInfoIsRejectedBeforeTouchingTheRepository() {
         QuickBooksDocument request = new QuickBooksDocument();
-        request.setType("INVOICE");
+        request.setType("INV");
         request.setServiceId("48213");
+        request.setProductId("70021");
 
         assertThatThrownBy(() -> service.create(request))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -66,8 +86,30 @@ class TemporalDocumentServiceTest {
     }
 
     @Test
+    void missingServiceIdIsRejectedBeforeTouchingTheRepository() {
+        QuickBooksDocument request = invoiceRequest("48213", "70021");
+        request.setServiceId(null);
+
+        assertThatThrownBy(() -> service.create(request))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("serviceId is required");
+        verifyNoInteractions(documentRepository, workflowClient);
+    }
+
+    @Test
+    void missingProductIdIsRejectedBeforeTouchingTheRepository() {
+        QuickBooksDocument request = invoiceRequest("48213", "70021");
+        request.setProductId(null);
+
+        assertThatThrownBy(() -> service.create(request))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("productId is required");
+        verifyNoInteractions(documentRepository, workflowClient);
+    }
+
+    @Test
     void unsupportedTypeIsRejectedBeforeTouchingTheRepository() {
-        QuickBooksDocument request = invoiceRequest("48213");
+        QuickBooksDocument request = invoiceRequest("48213", "70021");
         request.setType("BOGUS");
 
         assertThatThrownBy(() -> service.create(request))
@@ -76,10 +118,15 @@ class TemporalDocumentServiceTest {
         verifyNoInteractions(documentRepository, workflowClient);
     }
 
-    private QuickBooksDocument invoiceRequest(String serviceId) {
+    private String expectedControlKey(String type, String productId, String suffix) {
+        return type + productId + suffix + Year.now().getValue();
+    }
+
+    private QuickBooksDocument invoiceRequest(String serviceId, String productId) {
         QuickBooksDocument document = new QuickBooksDocument();
-        document.setType("INVOICE");
+        document.setType("INV");
         document.setServiceId(serviceId);
+        document.setProductId(productId);
         ClientInvoiceInfo customer = new ClientInvoiceInfo();
         customer.setName("Jane Doe");
         document.setClientInvoiceInfo(customer);

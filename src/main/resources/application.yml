@@ -56,6 +56,13 @@ quickbooks:
     oauth:
         redirect-uri: https://invoices.icligo.com/quickbooks/callback
         connect-uri: https://invoices.icligo.com/quickbooks/connect
+    deposit:
+        # Deposit account for SalesReceipt/RefundReceipt (QuickBooks' DepositToAccountRef).
+        # Validated to exist in QuickBooks on every SalesReceipt/RefundReceipt creation — the
+        # request fails if this Account doesn't exist in the company. Not applicable to Invoice
+        # (QuickBooks has no deposit-account field on Invoice; it only posts to Accounts
+        # Receivable, and only Payment/SalesReceipt/RefundReceipt support DepositToAccountRef).
+        sales-refund-account-name: "1030 - Stripe/Paypal"
     # ─── Production connection: READ-ONLY source for the sandbox-copy feature ────
     # No defaults on purpose — must be provided via environment variables so a
     # production credential is never checked into source control.

@@ -2,6 +2,7 @@ package com.icligo.quickbooks.temporal.workflow;
 
 import com.icligo.quickbooks.clients.quickbooks.model.Customer;
 import com.icligo.quickbooks.clients.quickbooks.model.Invoice;
+import com.icligo.quickbooks.enums.ProductTypes;
 import com.icligo.quickbooks.model.QuickBooksDocument;
 import com.icligo.quickbooks.temporal.activity.QuickBooksActivities;
 import io.temporal.spring.boot.WorkflowImpl;
@@ -17,6 +18,7 @@ import static com.icligo.quickbooks.temporal.activity.QuickBooksActivitiesImpl.T
  * <ol>
  *   <li>findOrCreateCustomer</li>
  *   <li>createInvoice</li>
+ *   <li>cancelSalesReceiptsForBooking — only when productType=Reserva; best-effort, never fails this workflow</li>
  *   <li>saveDocument</li>
  * </ol>
  */
@@ -49,6 +51,13 @@ public class CreateInvoiceWorkflowImpl implements CreateInvoiceWorkflow {
                 customer.getDisplayName()
         );
         document.setInvoice(invoice);
+
+        // Step 2b – a booking (Reserva) invoice supersedes any prepaid Sales Receipts for this
+        // serviceId; cancel them via CreditMemo. Best-effort — failures are emailed to the admin
+        // (see SalesReceiptCancellationService) but never fail this workflow.
+        if (ProductTypes.BOOKING.getValue().equalsIgnoreCase(document.getProductType())) {
+            documentActivity.cancelSalesReceiptsForBooking(document.getServiceId());
+        }
 
         // Step 3 – persist to MongoDB
         QuickBooksDocument saved = persistActivity.saveDocument(document);
