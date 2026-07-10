@@ -2,6 +2,7 @@ package com.icligo.quickbooks.temporal.activity;
 
 import com.icligo.quickbooks.clients.quickbooks.model.Customer;
 import com.icligo.quickbooks.clients.quickbooks.model.Invoice;
+import com.icligo.quickbooks.clients.quickbooks.model.Payment;
 import com.icligo.quickbooks.clients.quickbooks.model.RefundReceipt;
 import com.icligo.quickbooks.clients.quickbooks.model.SalesReceipt;
 import com.icligo.quickbooks.model.QuickBooksDocument;
@@ -58,4 +59,14 @@ public interface QuickBooksActivities {
      */
     @ActivityMethod
     void cancelSalesReceiptsForBooking(String serviceId);
+
+    /**
+     * Creates a Payment applying the Invoice's full amount, immediately marking it paid —
+     * called when the Invoice's productType is anything other than "Reserva" (bookings instead
+     * cancel prior Sales Receipts, see {@link #cancelSalesReceiptsForBooking}). Unlike that
+     * cancellation, this is a required step: a failure here fails the Invoice-creation workflow,
+     * same as {@link #createInvoice} itself.
+     */
+    @ActivityMethod
+    Payment createPayment(QuickBooksDocument document, Invoice invoice, String customerId, String customerDisplayName);
 }

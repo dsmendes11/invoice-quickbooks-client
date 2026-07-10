@@ -43,6 +43,9 @@ public class CreditMemo {
     @JsonProperty("CustomerMemo")
     private MemoRef customerMemo;
 
+    @JsonProperty("PrivateNote")
+    private String privateNote;
+
     @JsonProperty("TotalAmt")
     private BigDecimal totalAmt;
 

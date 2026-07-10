@@ -15,6 +15,9 @@ import java.math.BigDecimal;
 @Builder
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class SalesItemLineDetail {
+    @JsonProperty("ItemRef")
+    private ReferenceType itemRef;
+
     @JsonProperty("Qty")
     private Integer qty;
 

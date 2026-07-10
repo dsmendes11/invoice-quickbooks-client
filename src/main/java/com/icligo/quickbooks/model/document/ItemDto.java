@@ -32,7 +32,8 @@ public class ItemDto {
     @Schema(description = "Not currently used by document creation. Accepted for forward-compatibility only.")
     BigDecimal discount;
 
-    @Schema(description = "Not currently used by document creation. Accepted for forward-compatibility only.")
+    @Schema(description = "Booking locator. Joined across all items with '|' and set as the "
+            + "\"Reference no.\" on Sales Receipts, or the \"Memo\" on Invoices/CreditMemos/Refund Receipts.")
     String locator;
 
     @Schema(description = "Not currently used by document creation. Accepted for forward-compatibility only.")

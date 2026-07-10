@@ -17,7 +17,7 @@ import java.util.List;
 @Builder
 @JsonIgnoreProperties(ignoreUnknown = true)
 @JsonInclude(JsonInclude.Include.NON_NULL)
-public class SalesReceipt {
+public class Payment {
 
     @JsonProperty("Id")
     private String id;
@@ -25,23 +25,14 @@ public class SalesReceipt {
     @JsonProperty("SyncToken")
     private String syncToken;
 
-    @JsonProperty("DocNumber")
-    private String docNumber;
-
     @JsonProperty("TxnDate")
     private String txnDate;
 
     @JsonProperty("CustomerRef")
     private ReferenceType customerRef;
 
-    @JsonProperty("Line")
-    private List<Line> line;
-
-    @JsonProperty("TxnTaxDetail")
-    private TxnTaxDetail txnTaxDetail;
-
-    @JsonProperty("CustomerMemo")
-    private MemoRef customerMemo;
+    @JsonProperty("TotalAmt")
+    private BigDecimal totalAmt;
 
     @JsonProperty("DepositToAccountRef")
     private ReferenceType depositToAccountRef;
@@ -52,25 +43,43 @@ public class SalesReceipt {
     @JsonProperty("PaymentRefNum")
     private String paymentRefNum;
 
-    @JsonProperty("TotalAmt")
-    private BigDecimal totalAmt;
-
-    @JsonProperty("Balance")
-    private BigDecimal balance;
+    @JsonProperty("Line")
+    private List<PaymentLine> line;
 
     @JsonProperty("MetaData")
     private MetaData metaData;
-
-    // Compatibility methods
-    public String getReceiptNumber() {
-        return docNumber;
-    }
 
     public String getCustomerId() {
         return customerRef != null ? customerRef.getValue() : null;
     }
 
-    public String getPaymentMethod() {
-        return paymentMethodRef != null ? paymentMethodRef.getName() : null;
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class PaymentLine {
+        @JsonProperty("Amount")
+        private BigDecimal amount;
+
+        @JsonProperty("LinkedTxn")
+        private List<LinkedTxn> linkedTxn;
+    }
+
+    /**
+     * Applies this Payment against an existing transaction (here, always an Invoice) —
+     * {@code txnType} must match QuickBooks' own transaction type name exactly ("Invoice").
+     */
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class LinkedTxn {
+        @JsonProperty("TxnId")
+        private String txnId;
+
+        @JsonProperty("TxnType")
+        private String txnType;
     }
 }

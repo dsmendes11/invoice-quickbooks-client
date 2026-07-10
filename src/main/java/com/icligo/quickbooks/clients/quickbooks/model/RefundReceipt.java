@@ -43,6 +43,9 @@ public class RefundReceipt {
     @JsonProperty("CustomerMemo")
     private MemoRef customerMemo;
 
+    @JsonProperty("PrivateNote")
+    private String privateNote;
+
     @JsonProperty("DepositToAccountRef")
     private ReferenceType depositToAccountRef;
 

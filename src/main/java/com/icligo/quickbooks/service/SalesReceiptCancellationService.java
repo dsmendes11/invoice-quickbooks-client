@@ -3,10 +3,12 @@ package com.icligo.quickbooks.service;
 import com.icligo.quickbooks.clients.quickbooks.model.CreditMemo;
 import com.icligo.quickbooks.clients.quickbooks.model.Line;
 import com.icligo.quickbooks.clients.quickbooks.model.MemoRef;
+import com.icligo.quickbooks.clients.quickbooks.model.ReferenceType;
 import com.icligo.quickbooks.clients.quickbooks.model.SalesItemLineDetail;
 import com.icligo.quickbooks.clients.quickbooks.model.SalesReceipt;
 import com.icligo.quickbooks.model.QuickBooksDocument;
 import com.icligo.quickbooks.service.authentication.QuickBooksAlertService;
+import com.icligo.quickbooks.util.ItemLocatorUtils;
 import com.icligo.quickbooks.util.QuickBooksException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -85,6 +87,8 @@ public class SalesReceiptCancellationService {
     private CreditMemo buildCreditMemo(QuickBooksDocument salesReceiptDoc, SalesReceipt salesReceipt,
                                         BigDecimal remaining, BigDecimal salesReceiptTotal) {
         BigDecimal ratio = remaining.divide(salesReceiptTotal, 10, RoundingMode.HALF_UP);
+        String documentDescription = salesReceiptDoc.getDescription();
+        boolean hasDocumentDescription = documentDescription != null && !documentDescription.isBlank();
 
         List<Line> creditLines = new ArrayList<>();
         int lineNum = 1;
@@ -96,12 +100,15 @@ public class SalesReceiptCancellationService {
             if (lineAmount.compareTo(BigDecimal.ZERO) <= 0) {
                 continue;
             }
+            ReferenceType itemRef = originalLine.getSalesItemLineDetail() != null
+                    ? originalLine.getSalesItemLineDetail().getItemRef() : null;
             creditLines.add(Line.builder()
                     .lineNum(lineNum++)
-                    .description(originalLine.getDescription())
+                    .description(hasDocumentDescription ? documentDescription : originalLine.getDescription())
                     .amount(lineAmount)
                     .detailType("SalesItemLineDetail")
                     .salesItemLineDetail(SalesItemLineDetail.builder()
+                            .itemRef(itemRef)
                             .qty(1)
                             .unitPrice(lineAmount)
                             .build())
@@ -115,6 +122,7 @@ public class SalesReceiptCancellationService {
                 .customerMemo(MemoRef.builder()
                         .value("Cancellation of SalesReceipt " + salesReceipt.getDocNumber())
                         .build())
+                .privateNote(ItemLocatorUtils.joinLocators(salesReceiptDoc.getItems()))
                 .line(creditLines)
                 .build();
     }

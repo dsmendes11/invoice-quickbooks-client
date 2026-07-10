@@ -18,7 +18,8 @@ import static com.icligo.quickbooks.temporal.activity.QuickBooksActivitiesImpl.T
  * <ol>
  *   <li>findOrCreateCustomer</li>
  *   <li>createInvoice</li>
- *   <li>cancelSalesReceiptsForBooking — only when productType=Reserva; best-effort, never fails this workflow</li>
+ *   <li>productType=Reserva → cancelSalesReceiptsForBooking (best-effort, never fails this workflow);
+ *       any other productType → createPayment (required — a failure here fails this workflow, same as createInvoice)</li>
  *   <li>saveDocument</li>
  * </ol>
  */
@@ -53,10 +54,14 @@ public class CreateInvoiceWorkflowImpl implements CreateInvoiceWorkflow {
         document.setInvoice(invoice);
 
         // Step 2b – a booking (Reserva) invoice supersedes any prepaid Sales Receipts for this
-        // serviceId; cancel them via CreditMemo. Best-effort — failures are emailed to the admin
-        // (see SalesReceiptCancellationService) but never fail this workflow.
+        // serviceId; cancel them via CreditMemo (best-effort — failures are emailed to the admin,
+        // see SalesReceiptCancellationService, but never fail this workflow). Any other
+        // productType means the invoice is paid immediately: record a Payment for its full
+        // amount instead — this step is required, a failure here fails the workflow.
         if (ProductTypes.BOOKING.getValue().equalsIgnoreCase(document.getProductType())) {
             documentActivity.cancelSalesReceiptsForBooking(document.getServiceId());
+        } else {
+            documentActivity.createPayment(document, invoice, customer.getId(), customer.getDisplayName());
         }
 
         // Step 3 – persist to MongoDB

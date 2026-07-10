@@ -55,21 +55,23 @@ cannot be created here** — `type=RRT` is rejected outright (`400`); see §4.
 | `productId` | string | **yes, for every type** | becomes `DocNumber` = `"SRC"+productId` when `type=SRT`; required for every type regardless, and **is** the identifier used in the internal `controlKey` (see §7) |
 | `description` | string | no | mapped to the QuickBooks document's customer memo |
 | `microsite` | string | no | defaults to `"icligous"` |
-| `paymentMethod` | integer | no | only used for `SRT`. Every non-null value currently resolves to the QuickBooks PaymentMethod **"Credit Card"** (per-code mapping isn't implemented yet) — the request fails (`502`) if that PaymentMethod doesn't exist in the company. Omitted/`null` → no payment method sent at all, QuickBooks applies the account default. Carried over automatically onto any RefundReceipt `POST /refunds` later creates against this Sales Receipt |
+| `paymentMethod` | integer | no | used for `SRT`, and for `INV` when `productType` isn't `"Reserva"` (see below — carried onto the Payment that's created). Every non-null value currently resolves to the QuickBooks PaymentMethod **"Credit Card"** (per-code mapping isn't implemented yet) — the request fails (`502`) if that PaymentMethod doesn't exist in the company. Omitted/`null` → no payment method sent at all, QuickBooks applies the account default. Carried over automatically onto any RefundReceipt `POST /refunds` later creates against a Sales Receipt |
 | `items` | array | **yes, at least one** | line items, see 3.3 — every `item` must match an existing QuickBooks Item name, values must be non-negative, and the total must be non-zero |
-| `productType` | string | no | only meaningful when `type=INV`: if `"Reserva"`, any Sales Receipts already on file for this `serviceId` are cancelled via CreditMemo (see docs/OPERATIONS.md §6). Any other value/omitted has no effect |
+| `productType` | string | no | only meaningful when `type=INV`. If `"Reserva"`, any Sales Receipts already on file for this `serviceId` are cancelled via CreditMemo (docs/OPERATIONS.md §6) and the Invoice is left open/unpaid. **Any other value, or omitted, means the Invoice is paid immediately**: a QuickBooks Payment for the Invoice's full amount is created and applied to it (docs/OPERATIONS.md §8) |
 
 Fields accepted but **not currently applied** to the QuickBooks document — safe to omit,
 don't rely on them: `invoiceType`.
 
-Every `SRT` document is also deposited into a fixed, server-configured QuickBooks Account
+Every `SRT` document, and every `INV` whose Payment gets created (i.e. `productType` isn't
+`"Reserva"`, §8), is deposited into a fixed, server-configured QuickBooks Account
 (`DepositToAccountRef`, default **"1030 - Stripe/Paypal"**, configurable via
 `quickbooks.deposit.sales-refund-account-name` / `QUICKBOOKS_DEPOSIT_SALES_REFUND_ACCOUNT_NAME`)
-— this isn't a request field, it applies to every `SRT` request unconditionally (and to any
-RefundReceipt later created against it via §4), and the request fails (`502`) if that Account
-doesn't exist in the company. `INV` has no equivalent: QuickBooks' Invoice entity has no
-deposit-account field at all (only Payment/SalesReceipt/RefundReceipt support
-`DepositToAccountRef`; an invoice just posts to Accounts Receivable).
+— this isn't a request field, it applies unconditionally (and to any RefundReceipt later
+created against a Sales Receipt via §4), and the request fails (`502`) if that Account doesn't
+exist in the company. A `"Reserva"` `INV` has no equivalent: QuickBooks' Invoice entity itself
+has no deposit-account field at all (only Payment/SalesReceipt/RefundReceipt support
+`DepositToAccountRef`; an invoice just posts to Accounts Receivable) — which is exactly why a
+non-`"Reserva"` `INV` needs a separate Payment created to actually mark it paid.
 
 `controlKey` and `serie` are server-computed and internal (see §7) — both are ignored if sent
 on a request; `serie` (but not `controlKey`) is populated back on the response.
@@ -91,7 +93,8 @@ Used to find-or-create the QuickBooks customer (matched by email/name).
 |---|---|
 | `item` | line description → QuickBooks line `Description` |
 | `value` | line amount → both `Amount` and `UnitPrice` (`Qty` is always `1`) |
-| `description`, `tax`, `discount`, `locator`, `itemDate` | accepted, **not currently applied** — don't rely on these for tax/discount logic today |
+| `locator` | joined across every item with `\|` and set as: the **"Reference no."** (`PaymentRefNum`) on Sales Receipts; the **"Memo"** (`PrivateNote`) on Invoices, Refund Receipts (§4), and the CreditMemos created when cancelling Sales Receipts (docs/OPERATIONS.md §6) |
+| `description`, `tax`, `discount`, `itemDate` | accepted, **not currently applied** — don't rely on these for tax/discount logic today |
 
 ### 3.4 Examples
 
@@ -137,7 +140,7 @@ curl -X POST https://invoices.icligo.com/invoice-quickbooks-service/v1/documents
 
 Same shape as the request, plus:
 - `id` — Mongo id of the saved record (use this if you need to look the document up later; there's no GET endpoint yet, only direct DB access)
-- `invoice` — the actual QuickBooks object (`Invoice`/`SalesReceipt`) with its QuickBooks `Id`, `TotalAmt`, `Balance`, etc.
+- `invoice` — the actual QuickBooks object (`Invoice`/`SalesReceipt`) with its QuickBooks `Id`, `TotalAmt`, `Balance`, etc. For a non-`"Reserva"` `INV`, this is still the **Invoice**, not the Payment created alongside it (docs/OPERATIONS.md §8) — the Payment's own QuickBooks `Id` isn't returned here; look it up in QuickBooks by the Invoice's `Id` (`LinkedTxn`) if you need it
 - `clientInvoiceInfo.clientId` / `clientHash` — the resolved QuickBooks customer id
 
 ## 4. Refund a Sales Receipt — `POST /invoice-quickbooks-service/v1/refunds`
@@ -222,7 +225,7 @@ Every error returns a JSON body shaped like:
 | `201` | Created | — |
 | `400` | Request failed validation — missing/invalid `type`, `type=RRT` on `/documents` (§3), missing `clientInvoiceInfo`, missing `serviceId`/`productId` (required for every type), no open Sales Receipts / non-positive `value` on `/refunds` (§4), or missing `clientInvoiceInfo.name`/`address`/`country`. `details` lists every violation where applicable. | No — fix the payload |
 | `401` | Missing/wrong `auth-token` header | No — fix the header |
-| `502` | QuickBooks itself (or the Temporal workflow orchestrating the call) rejected or failed the request — e.g. invalid customer data QuickBooks itself rejects, QuickBooks API outage, an expired/revoked QuickBooks OAuth connection on this service's side, or (for `SRT`) the configured PaymentMethod/deposit-Account not existing in the company | Transient causes: yes, with backoff. A missing PaymentMethod/Account is a standing config problem in QuickBooks, not transient — retrying won't help until it's created there |
+| `502` | QuickBooks itself (or the Temporal workflow orchestrating the call) rejected or failed the request — e.g. invalid customer data QuickBooks itself rejects, QuickBooks API outage, an expired/revoked QuickBooks OAuth connection on this service's side, the configured PaymentMethod/deposit-Account not existing in the company (`SRT`, or `INV` when `productType` isn't `"Reserva"`, §8), or the Payment itself failing to create for a non-`"Reserva"` `INV` — that failure fails the whole request, the Invoice is not left half-created | Transient causes: yes, with backoff. A missing PaymentMethod/Account is a standing config problem in QuickBooks, not transient — retrying won't help until it's created there |
 | `500` | Unexpected internal error | Yes, with backoff |
 
 `message` is safe to log; don't parse it programmatically — branch on `status` only. The

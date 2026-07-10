@@ -154,3 +154,21 @@ determines which Sales Receipts absorb it.
   (`sendRefundAllocationFailedAlert`, same Mailjet mechanism as §5) with the
   `serviceId`/`productId`/`amount`/reason, since that portion of the refund needs to be handled
   manually.
+
+## 8. Non-booking invoices get a Payment recorded immediately
+
+`productType=Reserva` is the only case where an Invoice is left as an open, unpaid receivable
+(§6 handles what happens to it instead). For every other `productType` (including none) —
+[`CreateInvoiceWorkflowImpl`](../src/main/java/com/icligo/quickbooks/temporal/workflow/CreateInvoiceWorkflowImpl.java)
+calls the `createPayment` activity right after `createInvoice`, applying a QuickBooks Payment
+for the Invoice's full `TotalAmt`, linked to that Invoice (`LinkedTxn`: `TxnType=Invoice`), so
+it shows as paid immediately rather than sitting on Accounts Receivable.
+
+- Same customer, same `paymentMethod` (if the request sent one — resolved the same way as
+  Sales Receipts/Refund Receipts, see docs/CLIENT_INTEGRATION.md §3), and the same deposit
+  Account (`quickbooks.deposit.sales-refund-account-name`) as every other money-receiving
+  transaction this service creates — Payment is one of the few QuickBooks entities (along with
+  SalesReceipt/RefundReceipt) that supports `DepositToAccountRef` at all.
+- **Not best-effort**: unlike §6/§7, a failure creating the Payment fails the whole
+  `CreateInvoiceWorkflow` (same retry/failure semantics as `createInvoice` itself) — the Invoice
+  and its Payment are meant to exist together, not one without the other.

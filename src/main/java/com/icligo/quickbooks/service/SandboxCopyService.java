@@ -34,7 +34,7 @@ import java.util.UUID;
 @Service
 public class SandboxCopyService extends QuickBooksClient {
 
-    private static final Set<String> SUPPORTED_ENTITIES = Set.of("Customer", "Vendor", "Item");
+    private static final Set<String> SUPPORTED_ENTITIES = Set.of("Customer", "Item", "Account");
     private static final int MAX_PAGE_SIZE = 1000;
     private static final int MAX_BATCH_SIZE = 30;
 

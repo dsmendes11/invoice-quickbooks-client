@@ -46,6 +46,9 @@ public class Invoice {
     @JsonProperty("CustomerMemo")
     private MemoRef customerMemo;
 
+    @JsonProperty("PrivateNote")
+    private String privateNote;
+
     @JsonProperty("BillAddr")
     private PhysicalAddress billAddr;
 

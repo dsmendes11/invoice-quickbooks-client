@@ -133,6 +133,7 @@ public class RefundReceiptAllocationService {
         ItemDto refundItem = new ItemDto();
         refundItem.setItem(firstItem.getItem());
         refundItem.setValue(allocation.amount());
+        refundItem.setLocator(firstItem.getLocator());
 
         QuickBooksDocument refundDoc = new QuickBooksDocument();
         refundDoc.setType(SalesDocumentTypes.REFUND_RECEIPT.getValue());

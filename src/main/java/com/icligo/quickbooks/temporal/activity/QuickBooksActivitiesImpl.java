@@ -9,10 +9,13 @@ import com.icligo.quickbooks.repository.QuickBooksDocumentRepository;
 import com.icligo.quickbooks.service.AccountService;
 import com.icligo.quickbooks.service.CustomerService;
 import com.icligo.quickbooks.service.InvoiceService;
+import com.icligo.quickbooks.service.ItemService;
 import com.icligo.quickbooks.service.PaymentMethodService;
+import com.icligo.quickbooks.service.PaymentService;
 import com.icligo.quickbooks.service.RefundReceiptService;
 import com.icligo.quickbooks.service.SalesReceiptCancellationService;
 import com.icligo.quickbooks.service.SalesReceiptService;
+import com.icligo.quickbooks.util.ItemLocatorUtils;
 import com.icligo.quickbooks.util.PaymentMethodUtils;
 import com.icligo.quickbooks.util.QuickBooksException;
 import io.temporal.spring.boot.ActivityImpl;
@@ -46,7 +49,9 @@ public class QuickBooksActivitiesImpl implements QuickBooksActivities {
     private final RefundReceiptService refundReceiptService;
     private final PaymentMethodService paymentMethodService;
     private final AccountService accountService;
+    private final ItemService itemService;
     private final SalesReceiptCancellationService salesReceiptCancellationService;
+    private final PaymentService paymentService;
     private final QuickBooksDocumentRepository documentRepository;
 
     /**
@@ -99,7 +104,7 @@ public class QuickBooksActivitiesImpl implements QuickBooksActivities {
                     .docNumber(buildDocNumber(document))
                     .txnDate(LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE))
                     .dueDate(LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE))
-                    .line(buildLines(document.getItems()))
+                    .line(buildLines(document.getDescription(), document.getItems()))
                     .build();
 
             if (document.getDescription() != null) {
@@ -107,6 +112,8 @@ public class QuickBooksActivitiesImpl implements QuickBooksActivities {
                         .value(document.getDescription())
                         .build());
             }
+
+            invoice.setPrivateNote(ItemLocatorUtils.joinLocators(document.getItems()));
 
             Invoice created = invoiceService.createInvoice(invoice);
             log.info("[Activity] createInvoice – created id={}", created.getId());
@@ -135,7 +142,7 @@ public class QuickBooksActivitiesImpl implements QuickBooksActivities {
                             .build())
                     .docNumber(buildDocNumber(document))
                     .txnDate(LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE))
-                    .line(buildLines(document.getItems()))
+                    .line(buildLines(document.getDescription(), document.getItems()))
                     .build();
 
             if (document.getDescription() != null) {
@@ -149,6 +156,7 @@ public class QuickBooksActivitiesImpl implements QuickBooksActivities {
             }
 
             receipt.setDepositToAccountRef(resolveDepositAccountRef());
+            receipt.setPaymentRefNum(ItemLocatorUtils.joinLocators(document.getItems()));
 
             SalesReceipt created = salesReceiptService.createSalesReceipt(receipt);
             log.info("[Activity] createSalesReceipt – created id={}", created.getId());
@@ -177,7 +185,7 @@ public class QuickBooksActivitiesImpl implements QuickBooksActivities {
                             .build())
                     .docNumber(buildDocNumber(document))
                     .txnDate(LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE))
-                    .line(buildLines(document.getItems()))
+                    .line(buildLines(document.getDescription(), document.getItems()))
                     .build();
 
             if (document.getDescription() != null) {
@@ -191,6 +199,7 @@ public class QuickBooksActivitiesImpl implements QuickBooksActivities {
             }
 
             refund.setDepositToAccountRef(resolveDepositAccountRef());
+            refund.setPrivateNote(ItemLocatorUtils.joinLocators(document.getItems()));
 
             RefundReceipt created = refundReceiptService.createRefundReceipt(refund);
             log.info("[Activity] createRefundReceipt – created id={}", created.getId());
@@ -214,6 +223,46 @@ public class QuickBooksActivitiesImpl implements QuickBooksActivities {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // Payment (non-booking invoices, paid immediately)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Override
+    public Payment createPayment(QuickBooksDocument document, Invoice invoice, String customerId, String customerDisplayName) {
+        log.info("[Activity] createPayment – invoiceId={}, customerId={}", invoice.getId(), customerId);
+        try {
+            Payment payment = Payment.builder()
+                    .customerRef(ReferenceType.builder()
+                            .value(customerId)
+                            .name(customerDisplayName)
+                            .build())
+                    .txnDate(LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE))
+                    .totalAmt(invoice.getTotalAmt())
+                    .paymentRefNum(invoice.getDocNumber())
+                    .line(List.of(Payment.PaymentLine.builder()
+                            .amount(invoice.getTotalAmt())
+                            .linkedTxn(List.of(Payment.LinkedTxn.builder()
+                                    .txnId(invoice.getId())
+                                    .txnType("Invoice")
+                                    .build()))
+                            .build()))
+                    .build();
+
+            if (document.getPaymentMethod() != null) {
+                payment.setPaymentMethodRef(resolvePaymentMethodRef(document.getPaymentMethod()));
+            }
+
+            payment.setDepositToAccountRef(resolveDepositAccountRef());
+
+            Payment created = paymentService.createPayment(payment);
+            log.info("[Activity] createPayment – created id={}", created.getId());
+            return created;
+        } catch (QuickBooksException e) {
+            log.error("[Activity] createPayment failed: {}", e.getMessage());
+            throw new RuntimeException("createPayment failed: " + e.getMessage(), e);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Persist to MongoDB
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -234,19 +283,28 @@ public class QuickBooksActivitiesImpl implements QuickBooksActivities {
     // Private helpers (mirror DocumentService logic — kept in sync)
     // ─────────────────────────────────────────────────────────────────────────
 
-    private List<Line> buildLines(List<ItemDto> items) {
+    /**
+     * When {@code documentDescription} is present, it replaces the item's own description on
+     * every line (not appended) — falls back to {@code item.getItem()} only when the document
+     * has no description at all. {@code item.getItem()} itself always maps to the line's
+     * QuickBooks {@code ItemRef} (see {@link #resolveItemRef(String)}), regardless of what the
+     * line's Description text ends up being.
+     */
+    private List<Line> buildLines(String documentDescription, List<ItemDto> items) throws QuickBooksException {
         if (items == null || items.isEmpty()) {
             return new ArrayList<>();
         }
+        boolean hasDocumentDescription = documentDescription != null && !documentDescription.isBlank();
         List<Line> lines = new ArrayList<>();
         int lineNum = 1;
         for (ItemDto item : items) {
             lines.add(Line.builder()
                     .lineNum(lineNum++)
-                    .description(item.getItem())
+                    .description(hasDocumentDescription ? documentDescription : item.getItem())
                     .amount(item.getValue())
                     .detailType("SalesItemLineDetail")
                     .salesItemLineDetail(SalesItemLineDetail.builder()
+                            .itemRef(resolveItemRef(item.getItem()))
                             .qty(1)
                             .unitPrice(item.getValue())
                             .taxCodeRef(ReferenceType.builder().value("NON").build())
@@ -271,6 +329,24 @@ public class QuickBooksActivitiesImpl implements QuickBooksActivities {
             case SALES_RECEIPT -> "SRC" + document.getProductId();
             case REFUND_RECEIPT -> "RRC" + document.getProductId() + "_rfd" + document.getRefundId();
         };
+    }
+
+    /**
+     * Resolves {@code item.item} to an existing QuickBooks Item, for the line's {@code ItemRef}.
+     *
+     * @throws QuickBooksException if no QuickBooks Item exists with that name — callers must not
+     *         fall back to an unresolved reference, since QuickBooks would reject the line (or
+     *         apply the wrong item) instead.
+     */
+    private ReferenceType resolveItemRef(String itemName) throws QuickBooksException {
+        Item item = itemService.findByName(itemName);
+        if (item == null) {
+            throw new QuickBooksException("QuickBooks Item '" + itemName + "' does not exist in this company.");
+        }
+        return ReferenceType.builder()
+                .value(item.getId())
+                .name(item.getName())
+                .build();
     }
 
     /**
