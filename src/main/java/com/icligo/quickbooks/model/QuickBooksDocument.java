@@ -1,6 +1,5 @@
 package com.icligo.quickbooks.model;
 
-import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonView;
 import com.icligo.quickbooks.model.document.ClientInvoiceInfo;
@@ -67,9 +66,12 @@ public class QuickBooksDocument {
             + "Any other value (or omitted) has no effect.", example = "Reserva")
     private String productType;
 
-    @Schema(description = "Document type to create — the abbreviated code, not the long-form name: "
-            + "INV=Invoice, SRT=SalesReceipt. RRT (RefundReceipt) is rejected here — refunds are "
-            + "allocation-driven, see POST {api.base-path}/refunds.", allowableValues = {"INV", "SRT"},
+    @Schema(description = "Document type — the abbreviated code, not the long-form name: "
+            + "INV=Invoice, SRT=SalesReceipt. Only these two are accepted on POST /documents; "
+            + "RRT (RefundReceipt, see POST {api.base-path}/refunds) and CDM (CreditMemo, created "
+            + "internally when a booking Invoice cancels prior Sales Receipts, see "
+            + "docs/OPERATIONS.md §6) are rejected here but do appear as this field's value when "
+            + "such a document is returned/looked up.", allowableValues = {"INV", "SRT"},
             example = "INV", requiredMode = Schema.RequiredMode.REQUIRED)
     @NotBlank(message = "type is required")
     private String type;
@@ -106,13 +108,22 @@ public class QuickBooksDocument {
      * for RRT, empty otherwise) — matches the invoice-management-system's own
      * {@code checkAndCreateChaveControlo} exactly. A unique index on this field is what turns a
      * repeated create request into a no-op that returns the original document instead of
-     * creating a duplicate in QuickBooks. Always built internally — never accepted from or
-     * shown to API callers.
+     * creating a duplicate in QuickBooks. Always built internally — ignored if sent on a
+     * request — but returned to the caller, since it's the lookup key for {@link #documentPDF}
+     * (see {@link com.icligo.quickbooks.controller.DocumentController#getPdf}).
      */
-    @JsonIgnore
-    @Schema(hidden = true)
+    @Schema(description = "Server-computed idempotency key, and the id used to fetch this "
+            + "document's PDF (see documentPDF below). Ignored if sent on a request.",
+            accessMode = Schema.AccessMode.READ_ONLY, example = "INV700212026")
     @Indexed(unique = true)
     private String controlKey;
+
+    @Schema(description = "Relative link to this document's PDF, generated live by QuickBooks on "
+            + "every fetch (not cached) — see GET {api.base-path}/documents/{controlKey}/pdf. "
+            + "Ignored on request, populated on response.",
+            accessMode = Schema.AccessMode.READ_ONLY,
+            example = "/invoice-quickbooks-service/v1/documents/INV700212026/pdf")
+    private String documentPDF;
 
     /**
      * Returns the microsite value, defaulting to "icligo" when not set.

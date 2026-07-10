@@ -14,6 +14,7 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.NoSuchElementException;
 
 /**
  * Maps every exception that can surface from {@code DocumentController} to a status
@@ -47,6 +48,21 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiError> handleDuplicateKey(DuplicateKeyException ex) {
         return build(HttpStatus.CONFLICT,
                 "A document for this type/serviceId/productId/refundId was already created concurrently", null);
+    }
+
+    @ExceptionHandler(NoSuchElementException.class)
+    public ResponseEntity<ApiError> handleNotFound(NoSuchElementException ex) {
+        return build(HttpStatus.NOT_FOUND, ex.getMessage(), null);
+    }
+
+    /**
+     * Surfaces from {@code DocumentPdfService} when a document's QuickBooks entity wasn't
+     * recorded as expected (should not happen in practice — every document is only ever
+     * returned to callers after its QuickBooks entity is set).
+     */
+    @ExceptionHandler(IllegalStateException.class)
+    public ResponseEntity<ApiError> handleConflict(IllegalStateException ex) {
+        return build(HttpStatus.CONFLICT, ex.getMessage(), null);
     }
 
     @ExceptionHandler(QuickBooksException.class)

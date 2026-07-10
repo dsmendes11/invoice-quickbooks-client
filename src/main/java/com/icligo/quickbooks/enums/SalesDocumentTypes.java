@@ -4,12 +4,15 @@ import lombok.Getter;
 
 /**
  * Mirrors the invoice-management-system's {@code TiposDocumentoVendas}, scoped down to the
- * three document types this service creates.
+ * document types this service creates. {@code CREDIT_MEMO} is system-generated only (created by
+ * {@code SalesReceiptCancellationService} when a booking Invoice cancels prior Sales Receipts,
+ * see docs/OPERATIONS.md §6) — like {@code REFUND_RECEIPT}, it's rejected on {@code POST
+ * /documents} ({@link com.icligo.quickbooks.validation.QuickBooksDocumentValidator}).
  */
 @Getter
 public enum SalesDocumentTypes {
 
-    INVOICE("INV"), SALES_RECEIPT("SRT"), REFUND_RECEIPT("RRT");
+    INVOICE("INV"), SALES_RECEIPT("SRT"), REFUND_RECEIPT("RRT"), CREDIT_MEMO("CDM");
 
     private final String value;
 

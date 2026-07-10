@@ -16,4 +16,8 @@ public class SalesReceiptService extends QuickBooksClient {
     public SalesReceipt createSalesReceipt(SalesReceipt receipt) throws QuickBooksException {
         return post("/salesreceipt", receipt, SalesReceipt.class);
     }
+
+    public byte[] getSalesReceiptPdf(String id) throws QuickBooksException {
+        return getPdf("/salesreceipt/" + id + "/pdf");
+    }
 }

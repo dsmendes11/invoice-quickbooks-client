@@ -16,4 +16,8 @@ public class RefundReceiptService extends QuickBooksClient {
     public RefundReceipt createRefundReceipt(RefundReceipt refund) throws QuickBooksException {
         return post("/refundreceipt", refund, RefundReceipt.class);
     }
+
+    public byte[] getRefundReceiptPdf(String id) throws QuickBooksException {
+        return getPdf("/refundreceipt/" + id + "/pdf");
+    }
 }

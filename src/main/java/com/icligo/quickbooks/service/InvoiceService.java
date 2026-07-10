@@ -16,4 +16,8 @@ public class InvoiceService extends QuickBooksClient {
     public Invoice createInvoice(Invoice invoice) throws QuickBooksException {
         return post("/invoice", invoice, Invoice.class);
     }
+
+    public byte[] getInvoicePdf(String id) throws QuickBooksException {
+        return getPdf("/invoice/" + id + "/pdf");
+    }
 }

@@ -6,12 +6,16 @@ import com.icligo.quickbooks.clients.quickbooks.model.ReferenceType;
 import com.icligo.quickbooks.clients.quickbooks.model.SalesReceipt;
 import com.icligo.quickbooks.enums.SalesDocumentTypes;
 import com.icligo.quickbooks.model.QuickBooksDocument;
+import com.icligo.quickbooks.repository.QuickBooksDocumentRepository;
 import com.icligo.quickbooks.service.authentication.QuickBooksAlertService;
 import com.icligo.quickbooks.util.QuickBooksException;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
+import java.time.Year;
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentCaptor.forClass;
@@ -24,8 +28,17 @@ class SalesReceiptCancellationServiceTest {
     private final ActiveSalesReceiptFinder activeSalesReceiptFinder = mock(ActiveSalesReceiptFinder.class);
     private final CreditMemoService creditMemoService = mock(CreditMemoService.class);
     private final QuickBooksAlertService alertService = mock(QuickBooksAlertService.class);
+    private final QuickBooksDocumentRepository documentRepository = mock(QuickBooksDocumentRepository.class);
     private final SalesReceiptCancellationService service =
-            new SalesReceiptCancellationService(activeSalesReceiptFinder, creditMemoService, alertService);
+            new SalesReceiptCancellationService(activeSalesReceiptFinder, creditMemoService, alertService, documentRepository);
+
+    {
+        ReflectionTestUtils.setField(service, "basePath", "/invoice-quickbooks-service/v1");
+    }
+
+    private static String controlKey(String productId) {
+        return SalesDocumentTypes.CREDIT_MEMO.getValue() + productId + Year.now().getValue();
+    }
 
     @Test
     void noActiveSalesReceiptsCreatesNoCreditMemo() {
@@ -33,7 +46,7 @@ class SalesReceiptCancellationServiceTest {
 
         service.cancelSalesReceiptsForServiceId("svc-1");
 
-        verifyNoInteractions(creditMemoService, alertService);
+        verifyNoInteractions(creditMemoService, alertService, documentRepository);
     }
 
     @Test
@@ -44,7 +57,7 @@ class SalesReceiptCancellationServiceTest {
         ActiveSalesReceipt active = new ActiveSalesReceipt(salesReceiptDoc("prod-1", "srv-1"), salesReceipt, new BigDecimal("100.00"));
 
         when(activeSalesReceiptFinder.findActive("srv-1")).thenReturn(List.of(active));
-        when(creditMemoService.createCreditMemo(any())).thenReturn(new CreditMemo());
+        when(creditMemoService.createCreditMemo(any())).thenReturn(CreditMemo.builder().id("qb-cdm-1").build());
 
         service.cancelSalesReceiptsForServiceId("srv-1");
 
@@ -60,6 +73,49 @@ class SalesReceiptCancellationServiceTest {
     }
 
     @Test
+    void createdCreditMemoIsPersistedAsANormalDocumentWithControlKey() throws Exception {
+        SalesReceipt salesReceipt = salesReceipt("SRCprod-3", new BigDecimal("50.00"),
+                line("Day tour", new BigDecimal("50.00")));
+        QuickBooksDocument salesReceiptDoc = salesReceiptDoc("prod-3", "srv-3");
+        ActiveSalesReceipt active = new ActiveSalesReceipt(salesReceiptDoc, salesReceipt, new BigDecimal("50.00"));
+
+        when(activeSalesReceiptFinder.findActive("srv-3")).thenReturn(List.of(active));
+        when(creditMemoService.createCreditMemo(any())).thenReturn(CreditMemo.builder().id("qb-cdm-3").build());
+
+        service.cancelSalesReceiptsForServiceId("srv-3");
+
+        var captor = forClass(QuickBooksDocument.class);
+        verify(documentRepository).save(captor.capture());
+        QuickBooksDocument saved = captor.getValue();
+
+        String expectedControlKey = controlKey("prod-3");
+        assertThat(saved.getType()).isEqualTo("CDM");
+        assertThat(saved.getControlKey()).isEqualTo(expectedControlKey);
+        assertThat(saved.getServiceId()).isEqualTo("srv-3");
+        assertThat(saved.getProductId()).isEqualTo("prod-3");
+        assertThat(saved.getInvoice()).isInstanceOf(CreditMemo.class);
+        assertThat(((CreditMemo) saved.getInvoice()).getId()).isEqualTo("qb-cdm-3");
+        assertThat(saved.getDocumentPDF()).isEqualTo("/invoice-quickbooks-service/v1/documents/" + expectedControlKey + "/pdf");
+        assertThat(saved.getItems()).hasSize(1);
+        assertThat(saved.getItems().get(0).getValue()).isEqualByComparingTo("50.00");
+    }
+
+    @Test
+    void alreadyCancelledProductIdIsSkippedWithoutCallingQuickBooksAgain() {
+        SalesReceipt salesReceipt = salesReceipt("SRCprod-5", new BigDecimal("50.00"), line("Day tour", new BigDecimal("50.00")));
+        ActiveSalesReceipt active = new ActiveSalesReceipt(salesReceiptDoc("prod-5", "srv-5"), salesReceipt, new BigDecimal("50.00"));
+
+        when(activeSalesReceiptFinder.findActive("srv-5")).thenReturn(List.of(active));
+        when(documentRepository.findByControlKey(controlKey("prod-5")))
+                .thenReturn(Optional.of(new QuickBooksDocument()));
+
+        service.cancelSalesReceiptsForServiceId("srv-5");
+
+        verifyNoInteractions(creditMemoService, alertService);
+        verify(documentRepository, never()).save(any());
+    }
+
+    @Test
     void partiallyRefundedSalesReceiptIsCreditedOnlyForTheRemainderProportionally() throws Exception {
         SalesReceipt salesReceipt = salesReceipt("SRCprod-2", new BigDecimal("100.00"),
                 line("Airport transfer", new BigDecimal("70.00")),
@@ -68,7 +124,7 @@ class SalesReceiptCancellationServiceTest {
         ActiveSalesReceipt active = new ActiveSalesReceipt(salesReceiptDoc("prod-2", "srv-2"), salesReceipt, new BigDecimal("60.00"));
 
         when(activeSalesReceiptFinder.findActive("srv-2")).thenReturn(List.of(active));
-        when(creditMemoService.createCreditMemo(any())).thenReturn(new CreditMemo());
+        when(creditMemoService.createCreditMemo(any())).thenReturn(CreditMemo.builder().id("qb-cdm-2").build());
 
         service.cancelSalesReceiptsForServiceId("srv-2");
 
@@ -93,6 +149,7 @@ class SalesReceiptCancellationServiceTest {
         service.cancelSalesReceiptsForServiceId("srv-4");
 
         verify(alertService).sendCreditMemoCancellationFailedAlert(eq("srv-4"), eq("prod-4"), anyString());
+        verify(documentRepository, never()).save(any());
     }
 
     private QuickBooksDocument salesReceiptDoc(String productId, String serviceId) {

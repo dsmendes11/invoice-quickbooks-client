@@ -129,6 +129,11 @@ supersedes what was originally billed as a prepaid sale.
   cancelled. Instead, it emails the admin (`sendCreditMemoCancellationFailedAlert`, same Mailjet
   mechanism as §5) with the `serviceId`/`productId`/reason, since that Sales Receipt is left
   open in QuickBooks and needs manual cancellation.
+- **Persisted like every other document type**: each CreditMemo is saved as a normal
+  `QuickBooksDocument` (`type=CDM`), with its own `controlKey` (`"CDM" + productId + serie`, no
+  suffix — see docs/CLIENT_INTEGRATION.md §8) and `documentPDF` link, checked for existence
+  *before* calling QuickBooks. If this activity is retried (e.g. by Temporal) for a `productId`
+  already cancelled this year, it's skipped rather than creating a duplicate CreditMemo.
 
 ## 7. Refunds are allocated across open Sales Receipts, not caller-specified
 

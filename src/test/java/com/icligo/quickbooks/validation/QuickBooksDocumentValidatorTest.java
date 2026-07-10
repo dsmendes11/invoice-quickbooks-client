@@ -119,6 +119,17 @@ class QuickBooksDocumentValidatorTest {
     }
 
     @Test
+    void creditMemoTypeIsAlwaysRejectedRegardlessOfOtherFields() {
+        QuickBooksDocument document = validDocument();
+        document.setType("CDM");
+
+        assertThat(validator.validate(document)).anySatisfy(v -> {
+            assertThat(v.getPropertyPath().toString()).isEqualTo("type");
+            assertThat(v.getMessage()).contains("created internally");
+        });
+    }
+
+    @Test
     void unsupportedTypeIsRejected() {
         QuickBooksDocument document = validDocument();
         document.setType("BOGUS");

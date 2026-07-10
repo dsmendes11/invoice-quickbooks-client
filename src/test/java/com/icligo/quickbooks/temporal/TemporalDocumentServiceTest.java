@@ -7,6 +7,7 @@ import com.icligo.quickbooks.temporal.workflow.CreateInvoiceWorkflow;
 import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowOptions;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Year;
 import java.util.Optional;
@@ -22,6 +23,52 @@ class TemporalDocumentServiceTest {
     private final QuickBooksDocumentRepository documentRepository = mock(QuickBooksDocumentRepository.class);
     private final TemporalDocumentService service =
             new TemporalDocumentService(workflowClient, documentRepository);
+
+    {
+        ReflectionTestUtils.setField(service, "basePath", "/invoice-quickbooks-service/v1");
+    }
+
+    @Test
+    void newlyCreatedDocumentGetsAControlKeyAndDocumentPdfLink() {
+        when(documentRepository.findByControlKey(expectedControlKey("INV", "70021", "")))
+                .thenReturn(Optional.empty());
+
+        CreateInvoiceWorkflow workflowStub = mock(CreateInvoiceWorkflow.class);
+        when(workflowStub.execute(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(workflowClient.newWorkflowStub(eq(CreateInvoiceWorkflow.class), any(WorkflowOptions.class)))
+                .thenReturn(workflowStub);
+
+        QuickBooksDocument result = service.create(invoiceRequest("48213", "70021"));
+
+        String expectedControlKey = expectedControlKey("INV", "70021", "");
+        assertThat(result.getControlKey()).isEqualTo(expectedControlKey);
+        assertThat(result.getDocumentPDF()).isEqualTo("/invoice-quickbooks-service/v1/documents/" + expectedControlKey + "/pdf");
+    }
+
+    @Test
+    void idempotentReplayAlsoGetsADocumentPdfLink() {
+        QuickBooksDocument existing = new QuickBooksDocument();
+        existing.setId("existing-id");
+        existing.setControlKey(expectedControlKey("INV", "70021", ""));
+        when(documentRepository.findByControlKey(expectedControlKey("INV", "70021", "")))
+                .thenReturn(Optional.of(existing));
+
+        QuickBooksDocument result = service.create(invoiceRequest("48213", "70021"));
+
+        assertThat(result.getDocumentPDF())
+                .isEqualTo("/invoice-quickbooks-service/v1/documents/" + expectedControlKey("INV", "70021", "") + "/pdf");
+    }
+
+    @Test
+    void creditMemoTypeIsRejected() {
+        QuickBooksDocument request = invoiceRequest("48213", "70021");
+        request.setType("CDM");
+
+        assertThatThrownBy(() -> service.create(request))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("CreditMemo creation is not accepted here");
+        verifyNoInteractions(documentRepository, workflowClient);
+    }
 
     @Test
     void idempotentReplayReturnsExistingDocumentWithoutStartingAWorkflow() {

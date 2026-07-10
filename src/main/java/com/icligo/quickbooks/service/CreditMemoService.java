@@ -16,4 +16,8 @@ public class CreditMemoService extends QuickBooksClient {
     public CreditMemo createCreditMemo(CreditMemo creditMemo) throws QuickBooksException {
         return post("/creditmemo", creditMemo, CreditMemo.class);
     }
+
+    public byte[] getCreditMemoPdf(String id) throws QuickBooksException {
+        return getPdf("/creditmemo/" + id + "/pdf");
+    }
 }

@@ -114,6 +114,64 @@ public abstract class QuickBooksClient {
     }
 
     /**
+     * Fetches a binary PDF response (e.g. {@code /invoice/{id}/pdf}) — separate from {@link #get}
+     * because the response body is raw bytes, not JSON/String; reading it via {@code .string()}
+     * like {@link #execute} does would corrupt the binary content through charset decoding.
+     */
+    protected byte[] getPdf(String endpoint) throws QuickBooksException {
+        String url = buildUrl(endpoint);
+        Request request = new Request.Builder()
+                .url(url)
+                .get()
+                .header("Accept", "application/pdf")
+                .build();
+        return executePdfWithRetry(request);
+    }
+
+    private byte[] executePdfWithRetry(Request request) throws QuickBooksException {
+        try {
+            return executePdf(request);
+        } catch (QuickBooksException e) {
+            if (isAuthenticationError(e)) {
+                log.warn("Authentication failed (401), attempting token refresh...");
+                if (oauthService != null && oauthService.hasRefreshToken()) {
+                    try {
+                        oauthService.forceRefresh();
+                        log.info("Token refreshed, retrying request...");
+                        return executePdf(request);
+                    } catch (QuickBooksException refreshError) {
+                        log.error("Failed to refresh token: {}", refreshError.getMessage());
+                        throw new QuickBooksException(
+                                "Authentication failed and token refresh failed. Please re-authenticate.",
+                                refreshError
+                        );
+                    }
+                } else {
+                    throw new QuickBooksException(
+                            "Authentication failed and no refresh token available. Please re-authenticate."
+                    );
+                }
+            }
+            throw e;
+        }
+    }
+
+    private byte[] executePdf(Request request) throws QuickBooksException {
+        try (Response response = httpClient.newCall(request).execute()) {
+            if (!response.isSuccessful()) {
+                String responseBody = response.body() != null ? response.body().string() : "";
+                log.error("QuickBooks API error: {} - {}", response.code(), responseBody);
+                throw new QuickBooksException(response.code(),
+                        extractErrorCode(responseBody),
+                        extractErrorMessage(responseBody));
+            }
+            return response.body() != null ? response.body().bytes() : new byte[0];
+        } catch (IOException e) {
+            throw new QuickBooksException("Network error", e);
+        }
+    }
+
+    /**
      * Execute request with automatic retry on 401 (token expired).
      */
     private <T> T executeWithRetry(Request request, Class<T> responseType) throws QuickBooksException {

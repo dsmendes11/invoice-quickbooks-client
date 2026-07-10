@@ -39,11 +39,17 @@ public class QuickBooksDocumentValidator implements ConstraintValidator<ValidQui
             return false;
         }
 
+        if (type.equals(SalesDocumentTypes.CREDIT_MEMO.getValue())) {
+            violation(context, "type",
+                    "CreditMemo creation is not accepted here — CreditMemos are created internally when a booking Invoice cancels prior Sales Receipts");
+            return false;
+        }
+
         boolean valid = true;
 
         if (checkEnumTypes(document)) {
             if (!SalesDocumentTypes.exists(type)) {
-                violation(context, "type", "must be one of INV, SRT, RRT");
+                violation(context, "type", "must be one of INV, SRT, RRT, CDM");
                 return false;
             }
             violation(context, "items",

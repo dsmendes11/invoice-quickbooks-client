@@ -11,6 +11,7 @@ import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowOptions;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.time.Year;
@@ -32,6 +33,9 @@ public class TemporalDocumentService {
 
     private final WorkflowClient workflowClient;
     private final QuickBooksDocumentRepository documentRepository;
+
+    @Value("${api.base-path}")
+    private String basePath;
 
     /**
      * Dispatch a document creation request to the appropriate Temporal workflow.
@@ -69,6 +73,12 @@ public class TemporalDocumentService {
         if (type == null) {
             throw new IllegalArgumentException("Unsupported document type: " + document.getType());
         }
+        if (type == SalesDocumentTypes.CREDIT_MEMO) {
+            // Defensive — QuickBooksDocumentValidator already rejects this at the controller
+            // layer. CreditMemos are only ever created internally by
+            // SalesReceiptCancellationService, never through this entrypoint.
+            throw new IllegalArgumentException("CreditMemo creation is not accepted here");
+        }
         // Normalize to the canonical code so later lookups (e.g. cancelling matching Sales
         // Receipts by type+serviceId) can rely on an exact, consistently-cased stored value.
         document.setType(type.getValue());
@@ -78,15 +88,30 @@ public class TemporalDocumentService {
         if (existing.isPresent()) {
             log.info("Idempotent replay for controlKey={} – returning existing document id={}",
                     controlKey, existing.get().getId());
-            return existing.get();
+            return attachDocumentPdfLink(existing.get());
         }
         document.setControlKey(controlKey);
 
-        return switch (type) {
+        QuickBooksDocument created = switch (type) {
             case INVOICE -> runInvoiceWorkflow(document);
             case SALES_RECEIPT -> runSalesReceiptWorkflow(document);
             case REFUND_RECEIPT -> runRefundReceiptWorkflow(document);
+            case CREDIT_MEMO -> throw new IllegalStateException("unreachable");
         };
+        return attachDocumentPdfLink(created);
+    }
+
+    /**
+     * Sets {@code documentPDF} to a relative link the caller can follow to fetch this document's
+     * PDF (see {@link com.icligo.quickbooks.controller.DocumentController#getPdf}) — computed
+     * fresh from {@code controlKey} on every return rather than persisted in Mongo, since it's
+     * fully derived from data we already have.
+     */
+    private QuickBooksDocument attachDocumentPdfLink(QuickBooksDocument document) {
+        if (document.getControlKey() != null) {
+            document.setDocumentPDF(basePath + "/documents/" + document.getControlKey() + "/pdf");
+        }
+        return document;
     }
 
     /**

@@ -328,6 +328,11 @@ public class QuickBooksActivitiesImpl implements QuickBooksActivities {
             case INVOICE -> "INV" + document.getServiceId();
             case SALES_RECEIPT -> "SRC" + document.getProductId();
             case REFUND_RECEIPT -> "RRC" + document.getProductId() + "_rfd" + document.getRefundId();
+            // Not actually reached today — CreditMemos are built directly in
+            // SalesReceiptCancellationService, not through createInvoice/createSalesReceipt/
+            // createRefundReceipt — kept here only so this switch stays exhaustive, using the
+            // same "NCC" prefix convention as that class.
+            case CREDIT_MEMO -> "NCC" + document.getProductId();
         };
     }
 
