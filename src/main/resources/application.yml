@@ -5,11 +5,17 @@ server:
 
 api.base-path: /invoice-quickbooks-service/v1
 
+# ─── Shared config only ───────────────────────────────────────────────────────
+# Everything environment-specific (QuickBooks base-url/OAuth URLs, MongoDB URI, Temporal
+# target, logging verbosity) lives in application-dev.yml / application-prod.yml — one of
+# those two profiles must always be active (spring.profiles.active=dev|prod), this file alone
+# is not a complete config. Every credential below is env-var-only, with no default, so a real
+# secret is never checked into source control.
 spring:
     application:
         name: Invoice-Quickbooks-Service
         tokenName: auth-token
-        tokenValue: bad823a746854251ab076e1d2460647deeb8c79dd14849dabb7f43a4bfac60c1
+        tokenValue: ${SPRING_APPLICATION_TOKENVALUE}
     main.banner-mode: off
     jackson:
         serialization:
@@ -33,29 +39,23 @@ spring:
                         jwk-set-uri: https://login.icligo.com/.well-known/jwks.json
                 registration:
                     uaa:
-                        client-id: 5aa1c1ed-82fa-4e59-9122-557d89f942bf
-                        client-secret: WUanoZDgUMn3qhv6KXySSM3CqfNmm__qlNUMbww3RM0
+                        client-id: ${UAA_CLIENT_ID}
+                        client-secret: ${UAA_CLIENT_SECRET}
             resourceserver:
                 jwt:
                     issuer-uri: https://login.icligo.com
                     jwk-set-uri: https://login.icligo.com/.well-known/jwks.json
     data:
         mongodb:
-            uri: mongodb://root:rootpassword@localhost:27017/quickbooks?authSource=admin&waitQueueMultiple=1000
             auto-index-creation: true
 
 quickbooks:
     api:
-        #base-url: https://quickbooks.api.intuit.com
-        base-url: https://sandbox-quickbooks.api.intuit.com
-        realm-id: 9341456227749627
-        client-id: AB77oxOozwKCu7E9mjmBrGX9YyMFYsYHZ6qCGxvBTp98kWIAu4
-        client-secret: teZdlEikpGPvqVhe4eumJpjvX5RB57x3GAd2YcB5
-        access-token: eyJhbGciOiJkaXIiLCJlbmMiOiJBMTI4Q0JDLUhTMjU2IiwieC5vcmciOiJIMCJ9..C9hsW_Gh-lnaEycei95ZeQ.c58ymRq_7U5hBMR4bQfxC2cBWrBazA-9_ZPPf7gwP69XgIQevscUtOrcNxE7rzOq2x1l_fGl1s_e0-u5AnJUtrYOPhlaKusxmpU8Ia7s5BHdBURgn4jTEHE4iP_lxx8-20v1TN3sZhtunSlTAZ_JbPs5EAdkoPBA-Z37YUhGxqmtn98HQRUsJP7zslL7Xy7fNQ4mLY72_nBpmilR89HA6FGia3Ow-ROXlldPTC8kKV8D7-lYWi8Q2uVrGXnebnWOOKARy9KG0xZ_X7vboISKlJ2T-5LNWVjJBy9nBS9_otXjUvRDWOir2N2tBqXzCx8aOkBeNWFEGTbls-X8pOiJgHLmyuI5RmO0NYvGvjTh2q9_zwuV0kD5Qs_qQRGVAX0_gvXgmZzuZftzQw4REY-H72yO67tDsQ_xYV5fh3unH9sus9AOpK0ZpMPLH2QBGQYakq1-GummN02uflXca7xuAZOuafaJILL8rTrmTeU7alY.yXdx1AKieCr1AaaXu2MoJQ
-        refresh-token: RT1-11-H0-1780684841cryhsyqyipdosd45nikj
-    oauth:
-        redirect-uri: https://invoices.icligo.com/quickbooks/callback
-        connect-uri: https://invoices.icligo.com/quickbooks/connect
+        realm-id: ${QUICKBOOKS_API_REALM_ID}
+        client-id: ${QUICKBOOKS_API_CLIENT_ID}
+        client-secret: ${QUICKBOOKS_API_CLIENT_SECRET}
+        access-token: ${QUICKBOOKS_API_ACCESS_TOKEN}
+        refresh-token: ${QUICKBOOKS_API_REFRESH_TOKEN}
     deposit:
         # Deposit account for SalesReceipt/RefundReceipt (QuickBooks' DepositToAccountRef).
         # Validated to exist in QuickBooks on every SalesReceipt/RefundReceipt creation — the
@@ -65,7 +65,10 @@ quickbooks:
         sales-refund-account-name: "1030 - Stripe/Paypal"
     # ─── Production connection: READ-ONLY source for the sandbox-copy feature ────
     # No defaults on purpose — must be provided via environment variables so a
-    # production credential is never checked into source control.
+    # production credential is never checked into source control. Note that in the "prod"
+    # profile, quickbooks.api.* (above) and quickbooks.prod.* (below) point at the SAME real
+    # company by design (see application-prod.yml) — SandboxCopyService.assertSafeToCopy()
+    # will therefore correctly refuse to run there; the sandbox-copy feature is dev-profile-only.
     prod:
         base-url: https://quickbooks.api.intuit.com
         realm-id: ${QUICKBOOKS_PROD_REALM_ID:}
@@ -85,20 +88,6 @@ mailjet:
 
 # ─── Temporal ────────────────────────────────────────────────────────────────
 temporal:
-    connection:
-        target: 127.0.0.1:7233   # override with TEMPORAL_TARGET env var in production
     namespace: default
     worker:
         task-queue: quickbooks-task-queue
-
-logging.level.org.springframework:
-    web: DEBUG
-    ws:
-        client:
-            MessageTracing:
-                sent: TRACE
-                received: TRACE
-        server:
-            MessageTracing:
-                sent: TRACE
-                received: TRACE

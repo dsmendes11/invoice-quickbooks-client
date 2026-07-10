@@ -1,0 +1,30 @@
+# ─── prod profile ─────────────────────────────────────────────────────────────
+# The real deployed instance at https://invoices.icligo.com. Unlike dev, nothing here has a
+# fallback default — every environment-specific value must be supplied at deploy time, so a
+# misconfigured deploy fails to start loudly instead of silently falling back to a dev/sandbox
+# value.
+#
+# quickbooks.api.* below points at the real QuickBooks company (not the sandbox) — the same
+# real company that quickbooks.prod.* (application.yml) reads from for the sandbox-copy
+# feature. That means source == destination for SandboxCopyService.assertSafeToCopy(), so
+# sandbox-copy correctly refuses to run under this profile; it's a dev-profile-only operation.
+spring:
+    data:
+        mongodb:
+            uri: ${SPRING_DATA_MONGODB_URI}
+
+quickbooks:
+    api:
+        base-url: https://quickbooks.api.intuit.com
+    oauth:
+        redirect-uri: https://invoices.icligo.com/quickbooks/callback
+        connect-uri: https://invoices.icligo.com/quickbooks/connect
+
+temporal:
+    connection:
+        target: ${TEMPORAL_CONNECTION_TARGET}
+
+logging:
+    level:
+        root: WARN
+        com.icligo: INFO

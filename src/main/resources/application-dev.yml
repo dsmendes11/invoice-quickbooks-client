@@ -1,0 +1,33 @@
+# ─── dev profile ──────────────────────────────────────────────────────────────
+# Shared dev environment (https://dev.invoices.icligo.com) AND local-machine development
+# (IntelliJ, docker-compose) both activate this profile — see docs/OPERATIONS.md and the
+# local-setup tutorial. A developer running on their own machine overrides
+# QUICKBOOKS_OAUTH_REDIRECT_URI/QUICKBOOKS_OAUTH_CONNECT_URI (below) to localhost via .env;
+# everything else here already matches what local development needs out of the box.
+spring:
+    data:
+        mongodb:
+            uri: ${SPRING_DATA_MONGODB_URI:mongodb://root:rootpassword@localhost:27017/quickbooks?authSource=admin&waitQueueMultiple=1000}
+
+quickbooks:
+    api:
+        base-url: https://sandbox-quickbooks.api.intuit.com
+    oauth:
+        redirect-uri: ${QUICKBOOKS_OAUTH_REDIRECT_URI:https://dev.invoices.icligo.com/quickbooks/callback}
+        connect-uri: ${QUICKBOOKS_OAUTH_CONNECT_URI:https://dev.invoices.icligo.com/quickbooks/connect}
+
+temporal:
+    connection:
+        target: ${TEMPORAL_CONNECTION_TARGET:127.0.0.1:7233}
+
+logging.level.org.springframework:
+    web: DEBUG
+    ws:
+        client:
+            MessageTracing:
+                sent: TRACE
+                received: TRACE
+        server:
+            MessageTracing:
+                sent: TRACE
+                received: TRACE

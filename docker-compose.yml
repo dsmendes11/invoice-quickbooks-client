@@ -5,7 +5,10 @@ services:
     ports:
       - "9191:9191"
     environment:
-      # Overrides application.yml via Spring Boot's env-var relaxed binding — no yml edits needed.
+      # Overrides application-dev.yml via Spring Boot's env-var relaxed binding — no yml edits
+      # needed. This compose file always runs the "dev" profile (see application-dev.yml /
+      # application-prod.yml) — it is a local-iteration tool, never used for the real prod deploy.
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-dev}
       SPRING_DATA_MONGODB_URI: mongodb://root:rootpassword@mongodb:27017/quickbooks?authSource=admin
       TEMPORAL_CONNECTION_TARGET: temporal:7233
       QUICKBOOKS_API_BASE_URL: ${QUICKBOOKS_API_BASE_URL:-https://sandbox-quickbooks.api.intuit.com}
@@ -14,9 +17,11 @@ services:
       QUICKBOOKS_API_CLIENT_SECRET: ${QUICKBOOKS_API_CLIENT_SECRET:-}
       QUICKBOOKS_API_ACCESS_TOKEN: ${QUICKBOOKS_API_ACCESS_TOKEN:-}
       QUICKBOOKS_API_REFRESH_TOKEN: ${QUICKBOOKS_API_REFRESH_TOKEN:-}
-      QUICKBOOKS_OAUTH_REDIRECT_URI: ${QUICKBOOKS_OAUTH_REDIRECT_URI:-https://invoices.icligo.com/quickbooks/callback}
-      QUICKBOOKS_OAUTH_CONNECT_URI: ${QUICKBOOKS_OAUTH_CONNECT_URI:-https://invoices.icligo.com/quickbooks/connect}
+      QUICKBOOKS_OAUTH_REDIRECT_URI: ${QUICKBOOKS_OAUTH_REDIRECT_URI:-https://dev.invoices.icligo.com/quickbooks/callback}
+      QUICKBOOKS_OAUTH_CONNECT_URI: ${QUICKBOOKS_OAUTH_CONNECT_URI:-https://dev.invoices.icligo.com/quickbooks/connect}
       SPRING_APPLICATION_TOKENVALUE: ${AUTH_TOKEN:-}
+      SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_UAA_CLIENT_ID: ${UAA_CLIENT_ID:-}
+      SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_UAA_CLIENT_SECRET: ${UAA_CLIENT_SECRET:-}
       MAILJET_PUBLIC_KEY: ${MAILJET_PUBLIC_KEY:-}
       MAILJET_PRIVATE_KEY: ${MAILJET_PRIVATE_KEY:-}
     depends_on:
