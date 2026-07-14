@@ -44,9 +44,9 @@ class RefundReceiptAllocationServiceTest {
     void singleActiveSalesReceiptWithPartialRefundCreatesOneRefundReceiptForTheRequestedValue() {
         ActiveSalesReceipt active = active("prod-1", "srv-1", "Airport transfer", new BigDecimal("100.00"));
         when(activeSalesReceiptFinder.findActive("srv-1")).thenReturn(List.of(active));
-        when(temporalDocumentService.create(any())).thenAnswer(inv -> List.of((QuickBooksDocument) inv.getArgument(0)));
+        when(temporalDocumentService.create(any())).thenAnswer(inv -> List.of(inv.getArgument(0, QuickBooksDocument.class)));
 
-        List<QuickBooksDocument> created = service.createAllocatedRefundReceipts(request("srv-1", "rfd-1", "30.00"));
+        List<Object> created = service.createAllocatedRefundReceipts(request("srv-1", "rfd-1", "30.00"));
 
         assertThat(created).hasSize(1);
         var captor = ArgumentCaptor.forClass(QuickBooksDocument.class);
@@ -67,10 +67,10 @@ class RefundReceiptAllocationServiceTest {
         ActiveSalesReceipt a = active("prod-a", "srv-2", "Day tour", new BigDecimal("40.00"));
         ActiveSalesReceipt b = active("prod-b", "srv-2", "Day tour", new BigDecimal("60.00"));
         when(activeSalesReceiptFinder.findActive("srv-2")).thenReturn(List.of(a, b));
-        when(temporalDocumentService.create(any())).thenAnswer(inv -> List.of((QuickBooksDocument) inv.getArgument(0)));
+        when(temporalDocumentService.create(any())).thenAnswer(inv -> List.of(inv.getArgument(0, QuickBooksDocument.class)));
 
         // requested 500 >> total available 100 → both fully consumed, excess silently ignored
-        List<QuickBooksDocument> created = service.createAllocatedRefundReceipts(request("srv-2", "rfd-2", "500.00"));
+        List<QuickBooksDocument> created = asDocuments(service.createAllocatedRefundReceipts(request("srv-2", "rfd-2", "500.00")));
 
         assertThat(created).hasSize(2);
         assertThat(created).extracting(QuickBooksDocument::getProductId).containsExactlyInAnyOrder("prod-a", "prod-b");
@@ -83,10 +83,10 @@ class RefundReceiptAllocationServiceTest {
         ActiveSalesReceipt a = active("prod-c", "srv-3", "Day tour", new BigDecimal("70.00"));
         ActiveSalesReceipt b = active("prod-d", "srv-3", "Day tour", new BigDecimal("30.00"));
         when(activeSalesReceiptFinder.findActive("srv-3")).thenReturn(List.of(a, b));
-        when(temporalDocumentService.create(any())).thenAnswer(inv -> List.of((QuickBooksDocument) inv.getArgument(0)));
+        when(temporalDocumentService.create(any())).thenAnswer(inv -> List.of(inv.getArgument(0, QuickBooksDocument.class)));
 
         // total available = 100, requested = 50 → proportional: 70% share=35.00, 30% share=15.00
-        List<QuickBooksDocument> created = service.createAllocatedRefundReceipts(request("srv-3", "rfd-3", "50.00"));
+        List<QuickBooksDocument> created = asDocuments(service.createAllocatedRefundReceipts(request("srv-3", "rfd-3", "50.00")));
 
         assertThat(created).hasSize(2);
         BigDecimal amountFor = amountForProductId(created, "prod-c");
@@ -105,14 +105,23 @@ class RefundReceiptAllocationServiceTest {
         when(temporalDocumentService.create(argThat(d -> d != null && "prod-e".equals(d.getProductId()))))
                 .thenThrow(new RuntimeException("QuickBooks Item 'Day tour' does not exist in this company."));
         when(temporalDocumentService.create(argThat(d -> d != null && "prod-f".equals(d.getProductId()))))
-                .thenAnswer(inv -> List.of((QuickBooksDocument) inv.getArgument(0)));
+                .thenAnswer(inv -> List.of(inv.getArgument(0, QuickBooksDocument.class)));
 
         // total=100, requested=100 → both fully consumed (50 each)
-        List<QuickBooksDocument> created = service.createAllocatedRefundReceipts(request("srv-4", "rfd-4", "100.00"));
+        List<QuickBooksDocument> created = asDocuments(service.createAllocatedRefundReceipts(request("srv-4", "rfd-4", "100.00")));
 
         assertThat(created).hasSize(1);
         assertThat(created.get(0).getProductId()).isEqualTo("prod-f");
         verify(alertService).sendRefundAllocationFailedAlert(eq("srv-4"), eq("prod-e"), eq(new BigDecimal("50.00")), anyString());
+    }
+
+    /**
+     * The mocked {@link TemporalDocumentService#create} above echoes back the built
+     * QuickBooksDocument request itself (standing in for whatever entity it would really
+     * return), so tests that need to inspect the built request's fields cast back here.
+     */
+    private List<QuickBooksDocument> asDocuments(List<Object> created) {
+        return created.stream().map(QuickBooksDocument.class::cast).toList();
     }
 
     private BigDecimal amountForProductId(List<QuickBooksDocument> docs, String productId) {

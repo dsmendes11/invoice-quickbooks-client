@@ -1,5 +1,6 @@
 package com.icligo.quickbooks.temporal;
 
+import com.icligo.quickbooks.clients.quickbooks.model.Invoice;
 import com.icligo.quickbooks.model.QuickBooksDocument;
 import com.icligo.quickbooks.model.document.ClientInvoiceInfo;
 import com.icligo.quickbooks.repository.QuickBooksDocumentRepository;
@@ -7,7 +8,6 @@ import com.icligo.quickbooks.temporal.workflow.CreateInvoiceWorkflow;
 import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowOptions;
 import org.junit.jupiter.api.Test;
-import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Year;
 import java.util.List;
@@ -25,41 +25,39 @@ class TemporalDocumentServiceTest {
     private final TemporalDocumentService service =
             new TemporalDocumentService(workflowClient, documentRepository);
 
-    {
-        ReflectionTestUtils.setField(service, "basePath", "/invoice-quickbooks-service/v1");
-    }
-
     @Test
-    void newlyCreatedDocumentGetsAControlKeyAndDocumentPdfLink() {
+    void newRequestReturnsTheRawQuickBooksEntityFromTheWorkflow() {
         when(documentRepository.findByControlKey(expectedControlKey("INV", "70021", "")))
                 .thenReturn(Optional.empty());
 
+        Invoice invoice = Invoice.builder().id("qb-inv-1").docNumber(expectedControlKey("INV", "70021", "")).build();
         CreateInvoiceWorkflow workflowStub = mock(CreateInvoiceWorkflow.class);
-        when(workflowStub.execute(any())).thenAnswer(invocation -> List.of((QuickBooksDocument) invocation.getArgument(0)));
+        when(workflowStub.execute(any())).thenAnswer(invocation -> {
+            QuickBooksDocument document = invocation.getArgument(0);
+            document.setInvoice(invoice);
+            return List.of(document);
+        });
         when(workflowClient.newWorkflowStub(eq(CreateInvoiceWorkflow.class), any(WorkflowOptions.class)))
                 .thenReturn(workflowStub);
 
-        List<QuickBooksDocument> result = service.create(invoiceRequest("48213", "70021"));
+        List<Object> result = service.create(invoiceRequest("48213", "70021"));
 
-        String expectedControlKey = expectedControlKey("INV", "70021", "");
-        assertThat(result).hasSize(1);
-        assertThat(result.get(0).getControlKey()).isEqualTo(expectedControlKey);
-        assertThat(result.get(0).getDocumentPDF()).isEqualTo("/invoice-quickbooks-service/v1/documents/" + expectedControlKey + "/pdf");
+        assertThat(result).containsExactly(invoice);
     }
 
     @Test
-    void idempotentReplayAlsoGetsADocumentPdfLink() {
+    void idempotentReplayReturnsTheExistingDocumentsInvoiceEntity() {
+        Invoice invoice = Invoice.builder().id("qb-inv-existing").build();
         QuickBooksDocument existing = new QuickBooksDocument();
         existing.setId("existing-id");
         existing.setControlKey(expectedControlKey("INV", "70021", ""));
+        existing.setInvoice(invoice);
         when(documentRepository.findByControlKey(expectedControlKey("INV", "70021", "")))
                 .thenReturn(Optional.of(existing));
 
-        List<QuickBooksDocument> result = service.create(invoiceRequest("48213", "70021"));
+        List<Object> result = service.create(invoiceRequest("48213", "70021"));
 
-        assertThat(result).hasSize(1);
-        assertThat(result.get(0).getDocumentPDF())
-                .isEqualTo("/invoice-quickbooks-service/v1/documents/" + expectedControlKey("INV", "70021", "") + "/pdf");
+        assertThat(result).containsExactly(invoice);
     }
 
     @Test
@@ -77,13 +75,13 @@ class TemporalDocumentServiceTest {
     void idempotentReplayReturnsExistingDocumentWithoutStartingAWorkflow() {
         QuickBooksDocument existing = new QuickBooksDocument();
         existing.setId("existing-id");
+        existing.setInvoice(Invoice.builder().id("qb-inv-existing").build());
         when(documentRepository.findByControlKey(expectedControlKey("INV", "70021", "")))
                 .thenReturn(Optional.of(existing));
 
-        List<QuickBooksDocument> result = service.create(invoiceRequest("48213", "70021"));
+        List<Object> result = service.create(invoiceRequest("48213", "70021"));
 
         assertThat(result).hasSize(1);
-        assertThat(result.get(0).getId()).isEqualTo("existing-id");
         verifyNoInteractions(workflowClient);
     }
 
@@ -95,15 +93,15 @@ class TemporalDocumentServiceTest {
         CreateInvoiceWorkflow workflowStub = mock(CreateInvoiceWorkflow.class);
         QuickBooksDocument created = new QuickBooksDocument();
         created.setId("new-id");
+        created.setInvoice(Invoice.builder().id("qb-inv-new").build());
         when(workflowStub.execute(any())).thenReturn(List.of(created));
         when(workflowClient.newWorkflowStub(eq(CreateInvoiceWorkflow.class), any(WorkflowOptions.class)))
                 .thenReturn(workflowStub);
 
         QuickBooksDocument request = invoiceRequest("48213", "70021");
-        List<QuickBooksDocument> result = service.create(request);
+        List<Object> result = service.create(request);
 
         assertThat(result).hasSize(1);
-        assertThat(result.get(0).getId()).isEqualTo("new-id");
         assertThat(request.getControlKey()).isEqualTo(expectedControlKey("INV", "70021", ""));
         assertThat(request.getSerie()).isEqualTo(String.valueOf(Year.now().getValue()));
         verify(workflowStub).execute(request);
@@ -113,15 +111,15 @@ class TemporalDocumentServiceTest {
     void controlKeyIgnoresServiceIdAndOnlyDependsOnProductId() {
         QuickBooksDocument existing = new QuickBooksDocument();
         existing.setId("existing-id");
+        existing.setInvoice(Invoice.builder().id("qb-inv-existing").build());
         when(documentRepository.findByControlKey(expectedControlKey("INV", "70021", "")))
                 .thenReturn(Optional.of(existing));
 
         // Same productId, different serviceId — still matches the same controlKey (serviceId
         // is required for context, per the corrected formula it does not feed into the key).
-        List<QuickBooksDocument> result = service.create(invoiceRequest("different-service-id", "70021"));
+        List<Object> result = service.create(invoiceRequest("different-service-id", "70021"));
 
         assertThat(result).hasSize(1);
-        assertThat(result.get(0).getId()).isEqualTo("existing-id");
         verifyNoInteractions(workflowClient);
     }
 

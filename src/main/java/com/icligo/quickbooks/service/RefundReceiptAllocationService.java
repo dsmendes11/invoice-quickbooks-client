@@ -45,7 +45,7 @@ public class RefundReceiptAllocationService {
     private final TemporalDocumentService temporalDocumentService;
     private final QuickBooksAlertService alertService;
 
-    public List<QuickBooksDocument> createAllocatedRefundReceipts(CreateRefundRequestDto request) {
+    public List<Object> createAllocatedRefundReceipts(CreateRefundRequestDto request) {
         List<ActiveSalesReceipt> active = activeSalesReceiptFinder.findActive(request.getServiceId());
         if (active.isEmpty()) {
             throw new IllegalArgumentException("No open Sales Receipts found for serviceId=" + request.getServiceId());
@@ -53,7 +53,7 @@ public class RefundReceiptAllocationService {
 
         List<RefundAllocation> allocations = allocateProportionally(active, request.getValue());
 
-        List<QuickBooksDocument> created = new ArrayList<>();
+        List<Object> created = new ArrayList<>();
         for (RefundAllocation allocation : allocations) {
             if (allocation.amount().compareTo(BigDecimal.ZERO) <= 0) {
                 continue;

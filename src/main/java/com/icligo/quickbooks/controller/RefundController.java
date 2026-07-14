@@ -1,7 +1,6 @@
 package com.icligo.quickbooks.controller;
 
 import com.icligo.quickbooks.model.CreateRefundRequestDto;
-import com.icligo.quickbooks.model.QuickBooksDocument;
 import com.icligo.quickbooks.service.RefundReceiptAllocationService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -28,7 +27,7 @@ public class RefundController {
     private final RefundReceiptAllocationService refundReceiptAllocationService;
 
     @PostMapping
-    public ResponseEntity<List<QuickBooksDocument>> create(@Valid @RequestBody CreateRefundRequestDto request) {
+    public ResponseEntity<List<Object>> create(@Valid @RequestBody CreateRefundRequestDto request) {
         log.info("POST /refunds – serviceId={}, refundId={}, value={}",
                 request.getServiceId(), request.getRefundId(), request.getValue());
         return ResponseEntity.ok(refundReceiptAllocationService.createAllocatedRefundReceipts(request));

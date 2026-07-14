@@ -51,14 +51,17 @@ public class DocumentController {
                     automatically if it doesn't exist yet. Transient QuickBooks/network failures are \
                     retried by the workflow before this call returns.
 
-                    Returns every document this call emitted, not just one: for a booking \
+                    Returns every QuickBooks entity this call emitted, not just one: for a booking \
                     ("Reserva") INV, that's the Invoice itself plus any CreditMemos created \
-                    cancelling prior Sales Receipts for the same serviceId (e.g. [INV, CDM, CDM]) \
-                    — see docs/OPERATIONS.md §6. For SRT (or a plain, non-booking INV), the array \
-                    always has exactly one element.""")
+                    cancelling prior Sales Receipts for the same serviceId (e.g. [Invoice, CreditMemo, \
+                    CreditMemo]) — see docs/OPERATIONS.md §6. For SRT (or a plain, non-booking INV), \
+                    the array always has exactly one element. Each element is the raw QuickBooks \
+                    object (Invoice/SalesReceipt/CreditMemo) as QuickBooks itself returned it — its \
+                    `DocNumber` is this service's controlKey (see §11), usable directly with §5 to \
+                    fetch that document's PDF.""")
     @ApiResponses({
-            @ApiResponse(responseCode = "201", description = "Document(s) created",
-                    content = @Content(array = @ArraySchema(schema = @Schema(implementation = QuickBooksDocument.class)))),
+            @ApiResponse(responseCode = "201", description = "QuickBooks entity/entities created",
+                    content = @Content(array = @ArraySchema(schema = @Schema(implementation = Object.class)))),
             @ApiResponse(responseCode = "400", description = "Request failed validation (missing/invalid fields)",
                     content = @Content(schema = @Schema(implementation = ApiError.class))),
             @ApiResponse(responseCode = "401", description = "Missing or invalid auth-token header",
@@ -67,10 +70,9 @@ public class DocumentController {
                     content = @Content(schema = @Schema(implementation = ApiError.class))),
     })
     @PostMapping
-    public ResponseEntity<List<QuickBooksDocument>> create(@Valid @RequestBody QuickBooksDocument document) {
+    public ResponseEntity<List<Object>> create(@Valid @RequestBody QuickBooksDocument document) {
         log.info("POST /documents – type={}", document.getType());
-        List<QuickBooksDocument> created = temporalDocumentService.create(document);
-        return ResponseEntity.status(HttpStatus.CREATED).body(created);
+        return ResponseEntity.status(HttpStatus.CREATED).body(temporalDocumentService.create(document));
     }
 
     @Operation(
@@ -160,7 +162,7 @@ public class DocumentController {
                     right now.""")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "CreditMemo created (or already existed from a prior identical call) — always a single-element array",
-                    content = @Content(array = @ArraySchema(schema = @Schema(implementation = QuickBooksDocument.class)))),
+                    content = @Content(array = @ArraySchema(schema = @Schema(implementation = Object.class)))),
             @ApiResponse(responseCode = "204", description = "This Sales Receipt has nothing left open to credit — nothing was done"),
             @ApiResponse(responseCode = "401", description = "Missing or invalid auth-token header",
                     content = @Content(schema = @Schema(implementation = ApiError.class))),
@@ -170,10 +172,10 @@ public class DocumentController {
                     content = @Content(schema = @Schema(implementation = ApiError.class))),
     })
     @GetMapping("/invoices/creditnote/{controlKey}")
-    public ResponseEntity<List<QuickBooksDocument>> createCreditNote(@PathVariable String controlKey) throws QuickBooksException {
+    public ResponseEntity<List<Object>> createCreditNote(@PathVariable String controlKey) throws QuickBooksException {
         log.info("GET /documents/invoices/creditnote/{}", controlKey);
         return salesReceiptCancellationService.cancelSalesReceiptByControlKey(controlKey)
-                .map(doc -> ResponseEntity.ok(List.of(doc)))
+                .map(doc -> ResponseEntity.ok(List.of(doc.getInvoice())))
                 .orElseGet(() -> ResponseEntity.noContent().build());
     }
 

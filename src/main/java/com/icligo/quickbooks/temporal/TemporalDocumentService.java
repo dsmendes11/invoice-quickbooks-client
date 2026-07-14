@@ -11,7 +11,6 @@ import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowOptions;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.time.Year;
@@ -35,9 +34,6 @@ public class TemporalDocumentService {
     private final WorkflowClient workflowClient;
     private final QuickBooksDocumentRepository documentRepository;
 
-    @Value("${api.base-path}")
-    private String basePath;
-
     /**
      * Dispatch a document creation request to the appropriate Temporal workflow.
      *
@@ -54,11 +50,15 @@ public class TemporalDocumentService {
      * {@code serie} works.
      *
      * @param document the incoming request document
-     * @return every document emitted by this call — the created/replayed document first, plus
-     *         (for a booking Invoice) any CreditMemos created cancelling prior Sales Receipts,
-     *         e.g. {@code [INV, CDM, CDM]}. Just a single-element list for SRT/RRT, or on replay.
+     * @return every raw QuickBooks entity (Invoice/SalesReceipt/RefundReceipt/CreditMemo) this
+     *         call emitted — the created/replayed document's entity first, plus (for a booking
+     *         Invoice) any CreditMemos created cancelling prior Sales Receipts, e.g. {@code
+     *         [Invoice, CreditMemo, CreditMemo]}. Just a single-element list for SRT/RRT, or on
+     *         replay. This service's own envelope ({@code controlKey}, {@code documentPDF}, etc.)
+     *         isn't returned — each entity's own {@code DocNumber} is the controlKey (see
+     *         docs/CLIENT_INTEGRATION.md §11), so nothing needed to fetch the PDF later is lost.
      */
-    public List<QuickBooksDocument> create(QuickBooksDocument document) {
+    public List<Object> create(QuickBooksDocument document) {
         if (document.getClientInvoiceInfo() == null) {
             throw new IllegalArgumentException("clientInvoiceInfo is required");
         }
@@ -91,7 +91,7 @@ public class TemporalDocumentService {
         if (existing.isPresent()) {
             log.info("Idempotent replay for controlKey={} – returning existing document id={}",
                     controlKey, existing.get().getId());
-            return List.of(attachDocumentPdfLink(existing.get()));
+            return toInvoices(List.of(existing.get()));
         }
         document.setControlKey(controlKey);
 
@@ -101,20 +101,17 @@ public class TemporalDocumentService {
             case REFUND_RECEIPT -> runRefundReceiptWorkflow(document);
             case CREDIT_MEMO -> throw new IllegalStateException("unreachable");
         };
-        return created.stream().map(this::attachDocumentPdfLink).toList();
+        return toInvoices(created);
     }
 
     /**
-     * Sets {@code documentPDF} to a relative link the caller can follow to fetch this document's
-     * PDF (see {@link com.icligo.quickbooks.controller.DocumentController#getPdf}) — computed
-     * fresh from {@code controlKey} on every return rather than persisted in Mongo, since it's
-     * fully derived from data we already have.
+     * Unwraps each of this service's internal {@link QuickBooksDocument} envelopes to the raw
+     * QuickBooks entity it holds ({@code Invoice}/{@code SalesReceipt}/{@code RefundReceipt}/
+     * {@code CreditMemo}) — callers get exactly what QuickBooks itself returned for each
+     * document, not this service's own bookkeeping fields.
      */
-    private QuickBooksDocument attachDocumentPdfLink(QuickBooksDocument document) {
-        if (document.getControlKey() != null) {
-            document.setDocumentPDF(basePath + "/documents/" + document.getControlKey() + "/pdf");
-        }
-        return document;
+    private List<Object> toInvoices(List<QuickBooksDocument> documents) {
+        return documents.stream().map(QuickBooksDocument::getInvoice).toList();
     }
 
     /**

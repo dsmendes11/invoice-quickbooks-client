@@ -78,9 +78,11 @@ Payment/SalesReceipt/RefundReceipt support `DepositToAccountRef`; an invoice jus
 Accounts Receivable) — which is exactly why a non-`"Reserva"` `INV` needs a separate Payment
 created to actually mark it paid.
 
-`controlKey` and `serie` are server-computed (see §11) — both are ignored if sent on a request,
-and both are populated back on the response. `controlKey` is the identifier used to fetch the
-document's PDF (§5) and is stable/repeatable — see §11 for exactly how it's built.
+`controlKey` and `serie` are server-computed (see §11) — both are ignored if sent on a request.
+Neither is returned as its own field (§3.5 returns the raw QuickBooks entity, not this
+service's internal envelope) — but `controlKey` **is** the entity's own `DocNumber`, so it's
+still right there in the response, and it's what you use with §5 to fetch the PDF. See §11 for
+exactly how it's built.
 
 ### 3.2 `clientInvoiceInfo`
 
@@ -91,7 +93,7 @@ Used to find-or-create the QuickBooks customer (matched by email/name).
 | `name`, `address`, `country` | **required** |
 | `email`, `phone`, `city`, `zipCode` | optional, mapped to the customer's email/phone/billing address |
 | `nif`, `clientCountry`, `finalCustomer` | accepted, not currently applied |
-| `clientId`, `clientHash` | **response-only** — ignore on request, this is how you get the resolved QuickBooks customer id back |
+| `clientId`, `clientHash` | ignored on request — resolved internally (find-or-create) but **not returned**, since §3.5's response is the raw QuickBooks entity, which has no `clientInvoiceInfo` field. The QuickBooks customer id is on the entity's own `CustomerRef` (`Value`/`Name`) instead |
 
 ### 3.3 `items[]`
 
@@ -144,25 +146,36 @@ curl -X POST https://invoices.icligo.com/invoice-quickbooks-service/v1/documents
 
 ### 3.5 Response — `201 Created`
 
-A **JSON array** of every document this call emitted — not just the one you asked for. Each
-element is shaped like the request, plus:
-- `id` — Mongo id of the saved record (internal; there's no GET endpoint for the JSON document itself yet, only direct DB access)
-- `controlKey` — the server-computed idempotency key (§11) and the public identifier for this document — use it with §5 to fetch the PDF
-- `documentPDF` — relative link to this document's PDF, equivalent to `GET {api.base-path}/documents/{controlKey}/pdf` (§5) — a convenience so you don't have to build the URL yourself
-- `invoice` — the actual QuickBooks object (`Invoice`/`SalesReceipt`/`CreditMemo`) with its QuickBooks `Id`, `TotalAmt`, `Balance`, etc. For a non-`"Reserva"` `INV`, this is still the **Invoice**, not the Payment created alongside it (docs/OPERATIONS.md §8) — the Payment's own QuickBooks `Id` isn't returned here; look it up in QuickBooks by the Invoice's `Id` (`LinkedTxn`) if you need it
-- `clientInvoiceInfo.clientId` / `clientHash` — the resolved QuickBooks customer id
+A **JSON array of raw QuickBooks entities** — not this service's own envelope, and not just
+the one document you asked for. Each element is exactly what QuickBooks itself returned for
+that document — an `Invoice`, `SalesReceipt`, or `CreditMemo` object, with QuickBooks' own
+fields: `Id`, `DocNumber`, `TxnDate`, `TotalAmt`, `Balance`, `Line`, `CustomerRef`, etc. There is
+**no wrapper** — no `controlKey`, `documentPDF`, `clientInvoiceInfo`, or Mongo `id` field on the
+response; those are internal bookkeeping, not returned.
+
+- **`DocNumber` is this service's `controlKey`** (see §11) — every entity's `DocNumber` equals
+  the `controlKey` it was created/looked-up with, so you still have what you need to fetch the
+  PDF (§5: `GET {api.base-path}/documents/{DocNumber}/pdf`) without a separate field for it.
+- **The QuickBooks customer id** is on `CustomerRef.Value` (name on `CustomerRef.Name`) — there's
+  no separate `clientInvoiceInfo.clientId` anymore, since there's no `clientInvoiceInfo` on the
+  response at all.
+- For a non-`"Reserva"` `INV`, the returned entity is still the **Invoice**, not the Payment
+  created alongside it (docs/OPERATIONS.md §8) — the Payment's own QuickBooks `Id` isn't
+  returned here; look it up in QuickBooks by the Invoice's `Id` (`LinkedTxn`) if you need it.
 
 **Array length depends on what actually got created:**
-- `SRT`, or a plain (non-`"Reserva"`) `INV` — always exactly **one** element: `[SRT]` or `[INV]`.
-- A `"Reserva"` `INV` — the Invoice itself, **plus** one `CDM` (CreditMemo) per Sales Receipt it
-  cancelled for the same `serviceId` (docs/OPERATIONS.md §6), e.g. `[INV]` if there was nothing
-  to cancel, or `[INV, CDM, CDM]` if two Sales Receipts were open. Order is always the Invoice
-  first, cancelled CreditMemos after. Cancellation is best-effort (§8's `productType` row) — a
-  CreditMemo that failed to create is alerted by email, not included in this array, and does
-  **not** fail the request; check the array's contents rather than assuming every prior Sales
-  Receipt was cancelled just because the call returned `201`.
-- An idempotent replay (§11) always returns a single-element array with the original document —
-  it does not re-derive or look up any CreditMemos that may have been created the first time.
+- `SRT`, or a plain (non-`"Reserva"`) `INV` — always exactly **one** element: `[SalesReceipt]`
+  or `[Invoice]`.
+- A `"Reserva"` `INV` — the Invoice itself, **plus** one `CreditMemo` per Sales Receipt it
+  cancelled for the same `serviceId` (docs/OPERATIONS.md §6), e.g. `[Invoice]` if there was
+  nothing to cancel, or `[Invoice, CreditMemo, CreditMemo]` if two Sales Receipts were open.
+  Order is always the Invoice first, cancelled CreditMemos after. Cancellation is best-effort
+  (§8's `productType` row) — a CreditMemo that failed to create is alerted by email, not
+  included in this array, and does **not** fail the request; check the array's contents rather
+  than assuming every prior Sales Receipt was cancelled just because the call returned `201`.
+- An idempotent replay (§11) always returns a single-element array with the original document's
+  entity — it does not re-derive or look up any CreditMemos that may have been created the
+  first time.
 
 ## 4. Refund a Sales Receipt — `POST /invoice-quickbooks-service/v1/refunds`
 
@@ -316,7 +329,7 @@ curl -H "auth-token: $AUTH_TOKEN" \
 
 | Status | Meaning |
 |---|---|
-| `200` | A CreditMemo was created (or already existed from an earlier identical call) — body is a single-element JSON array `[CDM]`, same shape as §3.5 |
+| `200` | A CreditMemo was created (or already existed from an earlier identical call) — body is a single-element JSON array `[CreditMemo]`, the raw QuickBooks entity, same shape as §3.5 |
 | `204` | This Sales Receipt has nothing left open to credit — no body |
 | `404` | No Sales Receipt document exists with this `controlKey` |
 | `502` | QuickBooks rejected or failed the CreditMemo request |
