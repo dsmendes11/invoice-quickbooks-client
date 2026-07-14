@@ -37,7 +37,11 @@ public class DocumentPdfService {
     public byte[] getPdf(String controlKey) throws QuickBooksException {
         QuickBooksDocument document = documentRepository.findByControlKey(controlKey)
                 .orElseThrow(() -> new NoSuchElementException("No document found with controlKey=" + controlKey));
-        return fetchPdf(document);
+        byte[] pdf = fetchPdf(document);
+        if (pdf == null || pdf.length == 0) {
+            throw new NoSuchElementException("QuickBooks returned no PDF content for controlKey=" + controlKey);
+        }
+        return pdf;
     }
 
     public String getPdfBase64(String controlKey) throws QuickBooksException {
@@ -56,26 +60,41 @@ public class DocumentPdfService {
                 if (!(entity instanceof Invoice invoice)) {
                     throw new IllegalStateException("Document " + document.getControlKey() + " has no Invoice recorded yet");
                 }
-                yield invoiceService.getInvoicePdf(invoice.getId());
+                yield invoiceService.getInvoicePdf(requireQuickBooksId(document, invoice.getId()));
             }
             case SALES_RECEIPT -> {
                 if (!(entity instanceof SalesReceipt salesReceipt)) {
                     throw new IllegalStateException("Document " + document.getControlKey() + " has no SalesReceipt recorded yet");
                 }
-                yield salesReceiptService.getSalesReceiptPdf(salesReceipt.getId());
+                yield salesReceiptService.getSalesReceiptPdf(requireQuickBooksId(document, salesReceipt.getId()));
             }
             case REFUND_RECEIPT -> {
                 if (!(entity instanceof RefundReceipt refundReceipt)) {
                     throw new IllegalStateException("Document " + document.getControlKey() + " has no RefundReceipt recorded yet");
                 }
-                yield refundReceiptService.getRefundReceiptPdf(refundReceipt.getId());
+                yield refundReceiptService.getRefundReceiptPdf(requireQuickBooksId(document, refundReceipt.getId()));
             }
             case CREDIT_MEMO -> {
                 if (!(entity instanceof CreditMemo creditMemo)) {
                     throw new IllegalStateException("Document " + document.getControlKey() + " has no CreditMemo recorded yet");
                 }
-                yield creditMemoService.getCreditMemoPdf(creditMemo.getId());
+                yield creditMemoService.getCreditMemoPdf(requireQuickBooksId(document, creditMemo.getId()));
             }
         };
+    }
+
+    /**
+     * Documents saved before the QuickBooks response-envelope unwrapping fix have their
+     * QuickBooks id stuck at null (every field was silently left null on creation) — treat that
+     * the same as "no document" (404) rather than forwarding a literal {@code null}/blank id to
+     * QuickBooks, which otherwise 404s or errors confusingly downstream.
+     */
+    private String requireQuickBooksId(QuickBooksDocument document, String quickBooksId) {
+        if (quickBooksId == null || quickBooksId.isBlank()) {
+            throw new NoSuchElementException(
+                    "Document " + document.getControlKey() + " has no QuickBooks id recorded — it may have been "
+                            + "created before a fix landed for QuickBooks' response envelope; re-create it to get a PDF");
+        }
+        return quickBooksId;
     }
 }

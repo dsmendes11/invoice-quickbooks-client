@@ -116,7 +116,10 @@ public class SalesReceiptCancellationService {
         List<Line> creditLines = new ArrayList<>();
         int lineNum = 1;
         for (Line originalLine : salesReceipt.getLine()) {
-            if (originalLine.getAmount() == null) {
+            // QuickBooks appends its own summary lines (e.g. DetailType=SubTotalLineDetail,
+            // Amount = the receipt's total) to the Line array it returns — those aren't sold
+            // items and must be skipped, or they'd be double-counted as an extra credited line.
+            if (originalLine.getAmount() == null || !"SalesItemLineDetail".equals(originalLine.getDetailType())) {
                 continue;
             }
             BigDecimal lineAmount = originalLine.getAmount().multiply(ratio).setScale(2, RoundingMode.HALF_UP);

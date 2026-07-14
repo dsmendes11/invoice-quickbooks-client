@@ -60,9 +60,13 @@ quickbooks:
         # Deposit account for SalesReceipt/RefundReceipt (QuickBooks' DepositToAccountRef).
         # Validated to exist in QuickBooks on every SalesReceipt/RefundReceipt creation — the
         # request fails if this Account doesn't exist in the company. Not applicable to Invoice
-        # (QuickBooks has no deposit-account field on Invoice; it only posts to Accounts
-        # Receivable, and only Payment/SalesReceipt/RefundReceipt support DepositToAccountRef).
+        # itself (QuickBooks has no deposit-account field on Invoice; it only posts to Accounts
+        # Receivable) — see payment-account-name below for the Payment recorded against it.
         sales-refund-account-name: "1030 - Stripe/Paypal"
+        # Deposit account for the Payment recorded against a non-"Reserva" Invoice (see
+        # docs/OPERATIONS.md §8) — deliberately separate from sales-refund-account-name above,
+        # since invoice payments settle into a different real-world account. Same validation.
+        payment-account-name: "1010 - BPI"
     # ─── Production connection: READ-ONLY source for the sandbox-copy feature ────
     # No defaults on purpose — must be provided via environment variables so a
     # production credential is never checked into source control. Note that in the "prod"

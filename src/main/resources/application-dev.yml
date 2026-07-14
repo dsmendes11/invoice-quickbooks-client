@@ -2,7 +2,7 @@
 # Shared dev environment (https://dev.invoices.icligo.com) AND local-machine development
 # (IntelliJ, docker-compose) both activate this profile — see docs/OPERATIONS.md and the
 # local-setup tutorial. A developer running on their own machine overrides
-# QUICKBOOKS_OAUTH_REDIRECT_URI/QUICKBOOKS_OAUTH_CONNECT_URI (below) to localhost via .env;
+# QUICKBOOKS_OAUTH_REDIRECT_URI/QUICKBOOKS_OAUTH_CONNECT_URI (below) to localhost via a.env;
 # everything else here already matches what local development needs out of the box.
 spring:
     data:

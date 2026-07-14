@@ -17,9 +17,11 @@ import java.math.BigDecimal;
  * Sends plain Mailjet admin-alert emails for the failure conditions this service can't
  * self-recover from: the QuickBooks connection breaking (see docs/OPERATIONS.md §5), a
  * best-effort SalesReceipt-cancellation CreditMemo failing (see
- * {@link com.icligo.quickbooks.service.SalesReceiptCancellationService}), and a partial-refund
+ * {@link com.icligo.quickbooks.service.SalesReceiptCancellationService}), a partial-refund
  * allocation failing to create its RefundReceipt (see
- * {@link com.icligo.quickbooks.service.RefundReceiptAllocationService}). Same Mailjet SDK/call
+ * {@link com.icligo.quickbooks.service.RefundReceiptAllocationService}), and a non-{@code
+ * "Reserva"} Invoice's Payment failing to create (see {@code QuickBooksActivitiesImpl.createPayment}
+ * — that failure still fails the workflow too, unlike the other two). Same Mailjet SDK/call
  * shape as notifications' MailJetClient, without the template plumbing since these are simple,
  * fixed-shape messages.
  */
@@ -115,6 +117,33 @@ public class QuickBooksAlertService {
                 + "<b>Reason:</b> " + reason + "</p>";
 
         sendAlert("RefundReceipt allocation failed", subject, textBody, htmlBody);
+    }
+
+    /**
+     * Sent when {@code createPayment} fails for a non-{@code "Reserva"} Invoice — unlike the
+     * CreditMemo/RefundReceipt alerts above, this failure is <b>not</b> best-effort: it still
+     * fails the whole {@code CreateInvoiceWorkflow} (see docs/OPERATIONS.md §8), so the caller
+     * already gets a 502. This email is an additional heads-up that the Invoice itself was
+     * created and is sitting unpaid in QuickBooks until the Payment is created manually.
+     */
+    public void sendPaymentCreationFailedAlert(String serviceId, String invoiceDocNumber, String reason) {
+        String subject = "QuickBooks: failed to create a Payment for an Invoice — action needed";
+        String textBody = "Creating an Invoice for serviceId=" + serviceId + " (DocNumber=" + invoiceDocNumber
+                + ") succeeded, but recording the Payment for its full amount failed. The Invoice was still "
+                + "created and is left unpaid in QuickBooks — it needs a Payment created manually, and the "
+                + "original request already received a 502 error.\n\n"
+                + "serviceId: " + serviceId + "\n"
+                + "invoice DocNumber: " + invoiceDocNumber + "\n"
+                + "Reason: " + reason;
+        String htmlBody = "<p>Creating an Invoice for serviceId=" + serviceId + " (DocNumber=" + invoiceDocNumber
+                + ") succeeded, but recording the Payment for its full amount failed. The Invoice was still "
+                + "created and is left unpaid in QuickBooks — it needs a Payment created manually, and the "
+                + "original request already received a 502 error.</p>"
+                + "<p><b>serviceId:</b> " + serviceId + "<br>"
+                + "<b>invoice DocNumber:</b> " + invoiceDocNumber + "<br>"
+                + "<b>Reason:</b> " + reason + "</p>";
+
+        sendAlert("Payment creation failed", subject, textBody, htmlBody);
     }
 
     private void sendAlert(String logLabel, String subject, String textBody, String htmlBody) {

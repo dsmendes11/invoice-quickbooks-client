@@ -1,5 +1,7 @@
 package com.icligo.quickbooks.clients.quickbooks;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.icligo.quickbooks.service.authentication.OAuthService;
@@ -71,35 +73,41 @@ public abstract class QuickBooksClient {
     }
 
     protected <T> T post(String endpoint, Object body, Class<T> responseType) throws QuickBooksException {
-        try {
-            String url = buildUrl(endpoint);
-            String jsonBody = objectMapper.writeValueAsString(body);
+        String url = buildUrl(endpoint);
+        String jsonBody = serialize(body);
 
-            RequestBody requestBody = RequestBody.create(jsonBody, JSON);
-            Request request = new Request.Builder()
-                    .url(url)
-                    .post(requestBody)
-                    .build();
+        RequestBody requestBody = RequestBody.create(jsonBody, JSON);
+        Request request = new Request.Builder()
+                .url(url)
+                .post(requestBody)
+                .build();
 
-            return executeWithRetry(request, responseType);
-        } catch (Exception e) {
-            throw new QuickBooksException("Failed to serialize request body", e);
-        }
+        return executeWithRetry(request, responseType);
     }
 
     protected <T> T put(String endpoint, Object body, Class<T> responseType) throws QuickBooksException {
+        String url = buildUrl(endpoint);
+        String jsonBody = serialize(body);
+
+        RequestBody requestBody = RequestBody.create(jsonBody, JSON);
+        Request request = new Request.Builder()
+                .url(url)
+                .put(requestBody)
+                .build();
+
+        return executeWithRetry(request, responseType);
+    }
+
+    /**
+     * Only wraps genuine JSON serialization failures — kept separate from {@link #executeWithRetry}
+     * so a real {@link QuickBooksException} from QuickBooks itself (e.g. a 400 ValidationFault)
+     * propagates with its actual message instead of being relabelled "Failed to serialize request
+     * body", which used to swallow the real cause when post()/put() caught every exception broadly.
+     */
+    private String serialize(Object body) throws QuickBooksException {
         try {
-            String url = buildUrl(endpoint);
-            String jsonBody = objectMapper.writeValueAsString(body);
-
-            RequestBody requestBody = RequestBody.create(jsonBody, JSON);
-            Request request = new Request.Builder()
-                    .url(url)
-                    .put(requestBody)
-                    .build();
-
-            return executeWithRetry(request, responseType);
-        } catch (Exception e) {
+            return objectMapper.writeValueAsString(body);
+        } catch (JsonProcessingException e) {
             throw new QuickBooksException("Failed to serialize request body", e);
         }
     }
@@ -236,11 +244,28 @@ public abstract class QuickBooksClient {
                 return responseType.cast(responseBody);
             }
 
-            return objectMapper.readValue(responseBody, responseType);
+            return objectMapper.convertValue(unwrapEntity(responseBody, responseType), responseType);
 
         } catch (IOException e) {
             throw new QuickBooksException("Network error", e);
         }
+    }
+
+    /**
+     * QuickBooks wraps every single-entity response in an envelope keyed by the entity's own
+     * name, e.g. {@code {"Invoice": {...}, "time": "..."}} for {@code POST /invoice} — not the
+     * bare entity at the root. Deserializing the raw body directly into {@code Invoice.class}
+     * (as this used to do) silently left every field null, since {@code @JsonIgnoreProperties
+     * (ignoreUnknown = true)} just discards the unrecognized top-level "Invoice"/"time" keys
+     * instead of failing loudly. {@link com.icligo.quickbooks.service.CustomerService} already
+     * unwraps this by hand; this generalizes that so every typed post()/get() benefits without
+     * each service needing its own copy. Falls back to the raw body if the expected wrapper key
+     * isn't present, so already-unwrapped shapes (or a future QBO response shape) still work.
+     */
+    private JsonNode unwrapEntity(String responseBody, Class<?> responseType) throws IOException {
+        JsonNode root = objectMapper.readTree(responseBody);
+        String entityKey = responseType.getSimpleName();
+        return root.has(entityKey) ? root.get(entityKey) : root;
     }
 
     private String extractErrorCode(String responseBody) {
@@ -296,10 +321,16 @@ public abstract class QuickBooksClient {
                 }
             }
 
-            Request authorized = original.newBuilder()
-                    .header("Authorization", "Bearer " + token)
-                    .header("Accept", "application/json")
-                    .build();
+            Request.Builder builder = original.newBuilder()
+                    .header("Authorization", "Bearer " + token);
+            // Only default to JSON if the caller didn't already set their own Accept header —
+            // getPdf() sets "application/pdf" explicitly, and unconditionally overwriting it
+            // here (as this used to do) made every PDF request ask QuickBooks for JSON instead,
+            // silently returning something that isn't a real PDF.
+            if (original.header("Accept") == null) {
+                builder.header("Accept", "application/json");
+            }
+            Request authorized = builder.build();
 
             return chain.proceed(authorized);
         }

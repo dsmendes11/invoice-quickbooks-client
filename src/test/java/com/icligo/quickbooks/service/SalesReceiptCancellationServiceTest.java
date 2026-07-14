@@ -138,6 +138,28 @@ class SalesReceiptCancellationServiceTest {
     }
 
     @Test
+    void quickBooksSummaryLineIsExcludedFromTheCreditMemo() throws Exception {
+        // QuickBooks appends its own SubTotalLineDetail summary line to the SalesReceipt it
+        // returns — real amount, but not a sold item — this must not be credited a second time.
+        SalesReceipt salesReceipt = salesReceipt("SRCprod-6", new BigDecimal("49.90"),
+                line("Trip Services", new BigDecimal("49.90")),
+                subtotalLine(new BigDecimal("49.90")));
+        ActiveSalesReceipt active = new ActiveSalesReceipt(salesReceiptDoc("prod-6", "srv-6"), salesReceipt, new BigDecimal("49.90"));
+
+        when(activeSalesReceiptFinder.findActive("srv-6")).thenReturn(List.of(active));
+        when(creditMemoService.createCreditMemo(any())).thenReturn(CreditMemo.builder().id("qb-cdm-6").build());
+
+        service.cancelSalesReceiptsForServiceId("srv-6");
+
+        var captor = forClass(CreditMemo.class);
+        verify(creditMemoService).createCreditMemo(captor.capture());
+        CreditMemo creditMemo = captor.getValue();
+
+        assertThat(creditMemo.getLine()).hasSize(1);
+        assertThat(creditMemo.getLine().get(0).getAmount()).isEqualByComparingTo("49.90");
+    }
+
+    @Test
     void creditMemoFailureIsAlertedAndDoesNotPropagate() throws Exception {
         SalesReceipt salesReceipt = salesReceipt("SRCprod-4", new BigDecimal("25.00"), line("Day tour", new BigDecimal("25.00")));
         ActiveSalesReceipt active = new ActiveSalesReceipt(salesReceiptDoc("prod-4", "srv-4"), salesReceipt, new BigDecimal("25.00"));
@@ -170,6 +192,11 @@ class SalesReceiptCancellationServiceTest {
     }
 
     private Line line(String description, BigDecimal amount) {
-        return Line.builder().description(description).amount(amount).build();
+        return Line.builder().description(description).amount(amount).detailType("SalesItemLineDetail").build();
+    }
+
+    /** Mirrors the summary line QuickBooks itself appends to every Line array it returns. */
+    private Line subtotalLine(BigDecimal amount) {
+        return Line.builder().amount(amount).detailType("SubTotalLineDetail").build();
     }
 }

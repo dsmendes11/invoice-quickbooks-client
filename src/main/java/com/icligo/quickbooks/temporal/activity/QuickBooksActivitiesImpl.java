@@ -15,6 +15,7 @@ import com.icligo.quickbooks.service.PaymentService;
 import com.icligo.quickbooks.service.RefundReceiptService;
 import com.icligo.quickbooks.service.SalesReceiptCancellationService;
 import com.icligo.quickbooks.service.SalesReceiptService;
+import com.icligo.quickbooks.service.authentication.QuickBooksAlertService;
 import com.icligo.quickbooks.util.ItemLocatorUtils;
 import com.icligo.quickbooks.util.PaymentMethodUtils;
 import com.icligo.quickbooks.util.QuickBooksException;
@@ -53,15 +54,25 @@ public class QuickBooksActivitiesImpl implements QuickBooksActivities {
     private final SalesReceiptCancellationService salesReceiptCancellationService;
     private final PaymentService paymentService;
     private final QuickBooksDocumentRepository documentRepository;
+    private final QuickBooksAlertService alertService;
 
     /**
      * Deposit account for SalesReceipt/RefundReceipt (QuickBooks' {@code DepositToAccountRef} —
      * not supported on Invoice, which only posts to Accounts Receivable). Configurable per
      * environment; validated against QuickBooks on every SalesReceipt/RefundReceipt creation
-     * (see {@link #resolveDepositAccountRef()}) rather than assumed to exist.
+     * (see {@link #resolveDepositAccountRef}) rather than assumed to exist.
      */
     @Value("${quickbooks.deposit.sales-refund-account-name:1030 - Stripe/Paypal}")
-    private String depositAccountName;
+    private String salesRefundDepositAccountName;
+
+    /**
+     * Deposit account for the Payment recorded against a non-{@code "Reserva"} Invoice (see
+     * {@link #createPayment}) — deliberately a separate, independently-configurable account from
+     * {@link #salesRefundDepositAccountName}, since invoice payments and Sales Receipts/Refund
+     * Receipts settle into different real-world accounts.
+     */
+    @Value("${quickbooks.deposit.payment-account-name:1010 - BPI}")
+    private String paymentDepositAccountName;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Customer
@@ -72,10 +83,10 @@ public class QuickBooksActivitiesImpl implements QuickBooksActivities {
         log.info("[Activity] findOrCreateCustomer – name={}, email={}",
                 clientInfo.getName(), clientInfo.getEmail());
         try {
+            // Note: mutating `clientInfo` here has no effect on the workflow's own copy of the
+            // document — Temporal (de)serializes activity parameters independently, so the
+            // workflow sets clientId/clientHash itself from this method's return value instead.
             Customer customer = customerService.findOrCreateCustomerByEmailAndName(clientInfo);
-            // propagate resolved IDs back into the info so downstream activities can use them
-            clientInfo.setClientId(customer.getId());
-            clientInfo.setClientHash(customer.getNotes());
             log.info("[Activity] findOrCreateCustomer – resolved customerId={}", customer.getId());
             return customer;
         } catch (QuickBooksException e) {
@@ -106,12 +117,6 @@ public class QuickBooksActivitiesImpl implements QuickBooksActivities {
                     .dueDate(LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE))
                     .line(buildLines(document.getDescription(), document.getItems()))
                     .build();
-
-            if (document.getDescription() != null) {
-                invoice.setCustomerMemo(MemoRef.builder()
-                        .value(document.getDescription())
-                        .build());
-            }
 
             invoice.setPrivateNote(ItemLocatorUtils.joinLocators(document.getItems()));
 
@@ -155,7 +160,7 @@ public class QuickBooksActivitiesImpl implements QuickBooksActivities {
                 receipt.setPaymentMethodRef(resolvePaymentMethodRef(document.getPaymentMethod()));
             }
 
-            receipt.setDepositToAccountRef(resolveDepositAccountRef());
+            receipt.setDepositToAccountRef(resolveDepositAccountRef(salesRefundDepositAccountName));
             receipt.setPaymentRefNum(ItemLocatorUtils.joinLocators(document.getItems()));
 
             SalesReceipt created = salesReceiptService.createSalesReceipt(receipt);
@@ -198,7 +203,7 @@ public class QuickBooksActivitiesImpl implements QuickBooksActivities {
                 refund.setPaymentMethodRef(resolvePaymentMethodRef(document.getPaymentMethod()));
             }
 
-            refund.setDepositToAccountRef(resolveDepositAccountRef());
+            refund.setDepositToAccountRef(resolveDepositAccountRef(salesRefundDepositAccountName));
             refund.setPrivateNote(ItemLocatorUtils.joinLocators(document.getItems()));
 
             RefundReceipt created = refundReceiptService.createRefundReceipt(refund);
@@ -251,13 +256,17 @@ public class QuickBooksActivitiesImpl implements QuickBooksActivities {
                 payment.setPaymentMethodRef(resolvePaymentMethodRef(document.getPaymentMethod()));
             }
 
-            payment.setDepositToAccountRef(resolveDepositAccountRef());
+            payment.setDepositToAccountRef(resolveDepositAccountRef(paymentDepositAccountName));
 
             Payment created = paymentService.createPayment(payment);
             log.info("[Activity] createPayment – created id={}", created.getId());
             return created;
         } catch (QuickBooksException e) {
             log.error("[Activity] createPayment failed: {}", e.getMessage());
+            // Not best-effort — this still fails the workflow (see class javadoc on
+            // CreateInvoiceWorkflowImpl) — but the admin gets an email too, since the Invoice
+            // itself was already created and is left unpaid until the Payment is added manually.
+            alertService.sendPaymentCreationFailedAlert(document.getServiceId(), invoice.getDocNumber(), e.getMessage());
             throw new RuntimeException("createPayment failed: " + e.getMessage(), e);
         }
     }
@@ -375,16 +384,17 @@ public class QuickBooksActivitiesImpl implements QuickBooksActivities {
     }
 
     /**
-     * Resolves the configured deposit account (see {@link #depositAccountName}) to an existing
-     * QuickBooks Account. Called unconditionally for every SalesReceipt/RefundReceipt — unlike
-     * payment method, this isn't tied to a request field, it's a fixed business rule.
+     * Resolves the given deposit account name to an existing QuickBooks Account. Called
+     * unconditionally for every SalesReceipt/RefundReceipt/Payment — unlike payment method,
+     * this isn't tied to a request field, it's a fixed business rule (with a different account
+     * per document type, see {@link #salesRefundDepositAccountName}/{@link #paymentDepositAccountName}).
      *
      * @throws QuickBooksException if the configured Account name doesn't exist in QuickBooks.
      */
-    private ReferenceType resolveDepositAccountRef() throws QuickBooksException {
-        Account account = accountService.findByName(depositAccountName);
+    private ReferenceType resolveDepositAccountRef(String accountName) throws QuickBooksException {
+        Account account = accountService.findByName(accountName);
         if (account == null) {
-            throw new QuickBooksException("QuickBooks Account '" + depositAccountName + "' does not exist in this company.");
+            throw new QuickBooksException("QuickBooks Account '" + accountName + "' does not exist in this company.");
         }
         return ReferenceType.builder()
                 .value(account.getId())

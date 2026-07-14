@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -70,6 +71,14 @@ public class CustomerService extends QuickBooksClient {
             Map<String, Object> requestBody = new HashMap<>();
             requestBody.put("DisplayName", customer.getDisplayName());
 
+            // Without an explicit PrintOnCheckName, QuickBooks defaults it to DisplayName —
+            // which includes the dedup hash — so this must always be sent explicitly.
+            if (customer.getPrintOnCheckName() != null) {
+                requestBody.put("PrintOnCheckName", customer.getPrintOnCheckName());
+            }
+            if (customer.getCompanyName() != null) {
+                requestBody.put("CompanyName", customer.getCompanyName());
+            }
             if (customer.getPrimaryEmailAddr() != null) {
                 requestBody.put("PrimaryEmailAddr", customer.getPrimaryEmailAddr());
             }
@@ -153,7 +162,7 @@ public class CustomerService extends QuickBooksClient {
             return existing;
         }
 
-        return createCustomerFromClientInfo(hashId, displayName, clientInfo);
+        return createCustomerFromClientInfo(displayName, clientInfo);
     }
 
     private Customer findByDisplayName(String displayName) throws QuickBooksException {
@@ -174,7 +183,7 @@ public class CustomerService extends QuickBooksClient {
         return value == null || value.trim().isEmpty();
     }
 
-    private Customer createCustomerFromClientInfo(String customerHash, String displayName, ClientInvoiceInfo clientInfo)
+    private Customer createCustomerFromClientInfo(String displayName, ClientInvoiceInfo clientInfo)
             throws QuickBooksException {
 
         String printOnCheckName = baseName(clientInfo != null ? clientInfo.getName() : null);
@@ -207,8 +216,6 @@ public class CustomerService extends QuickBooksClient {
             builder.billAddr(billAddr);
         }
 
-        builder.notes(customerHash);
-
         Customer newCustomer = builder.build();
 
         try {
@@ -219,27 +226,33 @@ public class CustomerService extends QuickBooksClient {
         }
     }
 
-    public static String generateCustomerId(String name, String address, String country) throws QuickBooksException {
+    /**
+     * Deterministic dedup hash of name/address/country — also returned to callers as
+     * {@code clientInvoiceInfo.clientHash} (recomputed fresh from the request's own fields
+     * rather than round-tripped through QuickBooks, see the Temporal workflows). No {@code
+     * throws} here: {@code SHA-256} is guaranteed available on every JVM, so the checked
+     * exception this used to declare could never actually be thrown.
+     */
+    public static String generateCustomerId(String name, String address, String country) {
+        String combined = (name != null ? name.toLowerCase().trim() : "") + "|" +
+                (address != null ? address.toLowerCase().trim() : "") + "|" +
+                (country != null ? country.toLowerCase().trim() : "");
+
+        MessageDigest digest;
         try {
-            String combined = (name != null ? name.toLowerCase().trim() : "") + "|" +
-                    (address != null ? address.toLowerCase().trim() : "") + "|" +
-                    (country != null ? country.toLowerCase().trim() : "");
-
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(combined.getBytes(StandardCharsets.UTF_8));
-
-            StringBuilder hexString = new StringBuilder();
-            for (int i = 0; i < Math.min(hash.length, 8); i++) {
-                String hex = Integer.toHexString(0xff & hash[i]);
-                if (hex.length() == 1) hexString.append('0');
-                hexString.append(hex);
-            }
-
-            return "CUST_" + hexString.toString().toUpperCase();
-
-        } catch (Exception e) {
-            log.error("Failed to generate customer ID hash: {}", e.getMessage());
-            throw new QuickBooksException("Failed to generate customer ID hash: " + e.getMessage());
+            digest = MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is not available on this JVM", e);
         }
+        byte[] hash = digest.digest(combined.getBytes(StandardCharsets.UTF_8));
+
+        StringBuilder hexString = new StringBuilder();
+        for (int i = 0; i < Math.min(hash.length, 8); i++) {
+            String hex = Integer.toHexString(0xff & hash[i]);
+            if (hex.length() == 1) hexString.append('0');
+            hexString.append(hex);
+        }
+
+        return "CUST_" + hexString.toString().toUpperCase();
     }
 }

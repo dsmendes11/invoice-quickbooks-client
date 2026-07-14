@@ -170,10 +170,17 @@ for the Invoice's full `TotalAmt`, linked to that Invoice (`LinkedTxn`: `TxnType
 it shows as paid immediately rather than sitting on Accounts Receivable.
 
 - Same customer, same `paymentMethod` (if the request sent one — resolved the same way as
-  Sales Receipts/Refund Receipts, see docs/CLIENT_INTEGRATION.md §3), and the same deposit
-  Account (`quickbooks.deposit.sales-refund-account-name`) as every other money-receiving
-  transaction this service creates — Payment is one of the few QuickBooks entities (along with
-  SalesReceipt/RefundReceipt) that supports `DepositToAccountRef` at all.
+  Sales Receipts/Refund Receipts, see docs/CLIENT_INTEGRATION.md §3), but a **separate** deposit
+  Account from Sales Receipts/Refund Receipts: `quickbooks.deposit.payment-account-name`
+  (default **"1010 - BPI"**), not `sales-refund-account-name` (**"1030 - Stripe/Paypal"**) —
+  Payment is one of the few QuickBooks entities (along with SalesReceipt/RefundReceipt) that
+  supports `DepositToAccountRef` at all, but invoice payments settle into a different real-world
+  account than Sales Receipts/Refund Receipts, so this is independently configurable.
 - **Not best-effort**: unlike §6/§7, a failure creating the Payment fails the whole
   `CreateInvoiceWorkflow` (same retry/failure semantics as `createInvoice` itself) — the Invoice
-  and its Payment are meant to exist together, not one without the other.
+  and its Payment are meant to exist together, not one without the other. The caller still gets
+  a `502` for this request.
+- **Also emails the admin** (`sendPaymentCreationFailedAlert`, same Mailjet mechanism as §5-§7),
+  even though the caller already sees the failure — because the Invoice itself was still created
+  in QuickBooks and is left unpaid until someone adds the Payment manually, an admin needs to
+  know about it independently of whatever the caller does with its own 502.

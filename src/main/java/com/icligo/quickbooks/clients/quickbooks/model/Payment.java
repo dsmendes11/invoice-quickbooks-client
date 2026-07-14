@@ -1,5 +1,6 @@
 package com.icligo.quickbooks.clients.quickbooks.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -49,6 +50,9 @@ public class Payment {
     @JsonProperty("MetaData")
     private MetaData metaData;
 
+    // @JsonIgnore so this doesn't leak as an extra unrecognized property (QuickBooks' API
+    // rejects a POST/PUT body containing it with a 400 ValidationFault).
+    @JsonIgnore
     public String getCustomerId() {
         return customerRef != null ? customerRef.getValue() : null;
     }

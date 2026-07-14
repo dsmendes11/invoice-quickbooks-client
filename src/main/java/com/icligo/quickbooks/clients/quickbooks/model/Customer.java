@@ -1,5 +1,6 @@
 package com.icligo.quickbooks.clients.quickbooks.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -206,7 +207,10 @@ public class Customer {
         private String lastUpdatedTime;
     }
 
-    // Compatibility methods for backward compatibility with existing code
+    // Compatibility methods for backward compatibility with existing code — @JsonIgnore so
+    // these don't leak as extra unrecognized properties (QuickBooks' API rejects a POST/PUT
+    // body containing them with a 400 ValidationFault).
+    @JsonIgnore
     public String getName() {
         if (displayName != null) return displayName;
         if (companyName != null) return companyName;
@@ -215,14 +219,17 @@ public class Customer {
         return null;
     }
 
+    @JsonIgnore
     public String getEmail() {
         return (primaryEmailAddr != null) ? primaryEmailAddr.getAddress() : null;
     }
 
+    @JsonIgnore
     public String getPhone() {
         return (primaryPhone != null) ? primaryPhone.getFreeFormNumber() : null;
     }
 
+    @JsonIgnore
     public Address getAddress() {
         if (billAddr == null) return null;
         return Address.builder()

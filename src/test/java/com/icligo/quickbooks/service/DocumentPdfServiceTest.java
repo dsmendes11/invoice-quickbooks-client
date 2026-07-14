@@ -100,6 +100,28 @@ class DocumentPdfServiceTest {
                 .isInstanceOf(IllegalStateException.class);
     }
 
+    @Test
+    void documentWithNoQuickBooksIdRecordedThrowsNoSuchElementInsteadOfCallingQuickBooks() {
+        // Simulates a document saved before the response-envelope unwrapping fix, where every
+        // field of the stored QuickBooks entity — including its id — was left null.
+        QuickBooksDocument document = document("INV", Invoice.builder().build());
+        when(documentRepository.findByControlKey("INV70024")).thenReturn(Optional.of(document));
+
+        assertThatThrownBy(() -> service.getPdf("INV70024"))
+                .isInstanceOf(NoSuchElementException.class);
+        verifyNoInteractions(invoiceService, salesReceiptService, refundReceiptService, creditMemoService);
+    }
+
+    @Test
+    void emptyPdfFromQuickBooksThrowsNoSuchElementInsteadOfReturning200WithNoBody() throws QuickBooksException {
+        QuickBooksDocument document = document("INV", Invoice.builder().id("qb-inv-3").build());
+        when(documentRepository.findByControlKey("INV70025")).thenReturn(Optional.of(document));
+        when(invoiceService.getInvoicePdf("qb-inv-3")).thenReturn(new byte[0]);
+
+        assertThatThrownBy(() -> service.getPdf("INV70025"))
+                .isInstanceOf(NoSuchElementException.class);
+    }
+
     private QuickBooksDocument document(String type, Object invoice) {
         QuickBooksDocument document = new QuickBooksDocument();
         document.setControlKey(type + "70021");
