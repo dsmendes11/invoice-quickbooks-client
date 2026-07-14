@@ -1,5 +1,6 @@
 package com.icligo.quickbooks.service;
 
+import com.icligo.quickbooks.clients.quickbooks.model.CreditMemo;
 import com.icligo.quickbooks.clients.quickbooks.model.RefundReceipt;
 import com.icligo.quickbooks.clients.quickbooks.model.SalesReceipt;
 import com.icligo.quickbooks.enums.SalesDocumentTypes;
@@ -81,6 +82,41 @@ class ActiveSalesReceiptFinderTest {
     }
 
     @Test
+    void salesReceiptFullyCancelledByCreditMemoIsExcluded() {
+        // A booking (Reserva) Invoice superseded this Sales Receipt via CreditMemo — it must be
+        // treated as fully settled, the same as if it had been fully refunded, so a later
+        // /refunds call doesn't try to refund it a second time.
+        QuickBooksDocument doc = salesReceiptDoc("prod-6", "srv-6", salesReceipt(new BigDecimal("50.00")));
+        QuickBooksDocument creditMemo = creditMemoDoc("prod-6", new BigDecimal("50.00"));
+        when(documentRepository.findByTypeAndServiceId(SalesDocumentTypes.SALES_RECEIPT.getValue(), "srv-6"))
+                .thenReturn(List.of(doc));
+        when(documentRepository.findByTypeAndProductId(SalesDocumentTypes.REFUND_RECEIPT.getValue(), "prod-6"))
+                .thenReturn(List.of());
+        when(documentRepository.findByTypeAndProductId(SalesDocumentTypes.CREDIT_MEMO.getValue(), "prod-6"))
+                .thenReturn(List.of(creditMemo));
+
+        assertThat(finder.findActive("srv-6")).isEmpty();
+    }
+
+    @Test
+    void salesReceiptPartiallyRefundedAndPartiallyCreditedNetsBoth() {
+        QuickBooksDocument doc = salesReceiptDoc("prod-7", "srv-7", salesReceipt(new BigDecimal("100.00")));
+        QuickBooksDocument refund = refundDoc("prod-7", new BigDecimal("30.00"));
+        QuickBooksDocument creditMemo = creditMemoDoc("prod-7", new BigDecimal("20.00"));
+        when(documentRepository.findByTypeAndServiceId(SalesDocumentTypes.SALES_RECEIPT.getValue(), "srv-7"))
+                .thenReturn(List.of(doc));
+        when(documentRepository.findByTypeAndProductId(SalesDocumentTypes.REFUND_RECEIPT.getValue(), "prod-7"))
+                .thenReturn(List.of(refund));
+        when(documentRepository.findByTypeAndProductId(SalesDocumentTypes.CREDIT_MEMO.getValue(), "prod-7"))
+                .thenReturn(List.of(creditMemo));
+
+        List<ActiveSalesReceipt> active = finder.findActive("srv-7");
+
+        assertThat(active).hasSize(1);
+        assertThat(active.get(0).availableBalance()).isEqualByComparingTo("50.00");
+    }
+
+    @Test
     void documentWithoutAStoredSalesReceiptPayloadIsSkipped() {
         QuickBooksDocument doc = salesReceiptDoc("prod-5", "srv-5", null);
         when(documentRepository.findByTypeAndServiceId(SalesDocumentTypes.SALES_RECEIPT.getValue(), "srv-5"))
@@ -103,6 +139,14 @@ class ActiveSalesReceiptFinderTest {
         document.setType(SalesDocumentTypes.REFUND_RECEIPT.getValue());
         document.setProductId(productId);
         document.setInvoice(RefundReceipt.builder().totalAmt(totalAmt).build());
+        return document;
+    }
+
+    private QuickBooksDocument creditMemoDoc(String productId, BigDecimal totalAmt) {
+        QuickBooksDocument document = new QuickBooksDocument();
+        document.setType(SalesDocumentTypes.CREDIT_MEMO.getValue());
+        document.setProductId(productId);
+        document.setInvoice(CreditMemo.builder().totalAmt(totalAmt).build());
         return document;
     }
 

@@ -51,8 +51,8 @@ cannot be created here** — `type=RRT` is rejected outright (`400`); see §4.
 |---|---|---|---|
 | `type` | string | **yes** | abbreviated code, not the long-form name: `INV` (Invoice) or `SRT` (SalesReceipt) (case-insensitive). `RRT` is rejected — refunds go through `POST /refunds` (§4) |
 | `clientInvoiceInfo` | object | **yes** | see below — customer is found-or-created automatically |
-| `serviceId` | string | **yes, for every type** | becomes QuickBooks `DocNumber` = `"INV" + serviceId` when `type=INV`; required for every type regardless, for cross-type context — does **not** feed into the internal `controlKey` (see §8). Also what `POST /refunds` matches Sales Receipts by |
-| `productId` | string | **yes, for every type** | becomes `DocNumber` = `"SRC"+productId` when `type=SRT`; required for every type regardless, and **is** the identifier used in the internal `controlKey` (see §8) |
+| `serviceId` | string | **yes, for every type** | becomes QuickBooks `DocNumber` = `"INV" + serviceId` when `type=INV`; required for every type regardless, for cross-type context — does **not** feed into the internal `controlKey` (see §11). Also what `POST /refunds` matches Sales Receipts by |
+| `productId` | string | **yes, for every type** | becomes `DocNumber` = `"SRC"+productId` when `type=SRT`; required for every type regardless, and **is** the identifier used in the internal `controlKey` (see §11) |
 | `description` | string | no | for `SRT`/refund-allocated `RRT`, mapped to the QuickBooks document's customer memo; for `INV`, no customer memo is set (QuickBooks' `CustomerMemo` is left empty), but `description` still replaces every line's `Description` when present (§3.3) |
 | `microsite` | string | no | defaults to `"icligous"` |
 | `paymentMethod` | integer | no | used for `SRT`, and for `INV` when `productType` isn't `"Reserva"` (see below — carried onto the Payment that's created). Every non-null value currently resolves to the QuickBooks PaymentMethod **"Credit Card"** (per-code mapping isn't implemented yet) — the request fails (`502`) if that PaymentMethod doesn't exist in the company. Omitted/`null` → no payment method sent at all, QuickBooks applies the account default. Carried over automatically onto any RefundReceipt `POST /refunds` later creates against a Sales Receipt |
@@ -68,7 +68,7 @@ deposited into a fixed, server-configured QuickBooks Account (`DepositToAccountR
 `QUICKBOOKS_DEPOSIT_SALES_REFUND_ACCOUNT_NAME`) — this isn't a request field, it applies
 unconditionally, and the request fails (`502`) if that Account doesn't exist in the company.
 
-Every `INV` whose Payment gets created (i.e. `productType` isn't `"Reserva"`, §8) deposits into
+Every `INV` whose Payment gets created (i.e. `productType` isn't `"Reserva"`, §11) deposits into
 a **separate** fixed Account, default **"1010 - BPI"**, configurable via
 `quickbooks.deposit.payment-account-name` / `QUICKBOOKS_DEPOSIT_PAYMENT_ACCOUNT_NAME` — same
 "fails if missing" behavior, just a different account since invoice payments settle
@@ -78,9 +78,9 @@ Payment/SalesReceipt/RefundReceipt support `DepositToAccountRef`; an invoice jus
 Accounts Receivable) — which is exactly why a non-`"Reserva"` `INV` needs a separate Payment
 created to actually mark it paid.
 
-`controlKey` and `serie` are server-computed (see §8) — both are ignored if sent on a request,
+`controlKey` and `serie` are server-computed (see §11) — both are ignored if sent on a request,
 and both are populated back on the response. `controlKey` is the identifier used to fetch the
-document's PDF (§5) and is stable/repeatable — see §8 for exactly how it's built.
+document's PDF (§5) and is stable/repeatable — see §11 for exactly how it's built.
 
 ### 3.2 `clientInvoiceInfo`
 
@@ -146,7 +146,7 @@ curl -X POST https://invoices.icligo.com/invoice-quickbooks-service/v1/documents
 
 Same shape as the request, plus:
 - `id` — Mongo id of the saved record (internal; there's no GET endpoint for the JSON document itself yet, only direct DB access)
-- `controlKey` — the server-computed idempotency key (§8) and the public identifier for this document — use it with §5 to fetch the PDF
+- `controlKey` — the server-computed idempotency key (§11) and the public identifier for this document — use it with §5 to fetch the PDF
 - `documentPDF` — relative link to this document's PDF, equivalent to `GET {api.base-path}/documents/{controlKey}/pdf` (§5) — a convenience so you don't have to build the URL yourself
 - `invoice` — the actual QuickBooks object (`Invoice`/`SalesReceipt`) with its QuickBooks `Id`, `TotalAmt`, `Balance`, etc. For a non-`"Reserva"` `INV`, this is still the **Invoice**, not the Payment created alongside it (docs/OPERATIONS.md §8) — the Payment's own QuickBooks `Id` isn't returned here; look it up in QuickBooks by the Invoice's `Id` (`LinkedTxn`) if you need it
 - `clientInvoiceInfo.clientId` / `clientHash` — the resolved QuickBooks customer id
@@ -233,12 +233,137 @@ curl -H "auth-token: $AUTH_TOKEN" \
 ```
 
 Errors: `404` if no document exists with that `controlKey`; `502` if QuickBooks rejects or
-fails the PDF request (same semantics as §6). CreditMemos are covered too (`type=CDM` in the
+fails the PDF request (same semantics as §9). CreditMemos are covered too (`type=CDM` in the
 response, see docs/OPERATIONS.md §6) — they're persisted like every other document type,
 including their own `controlKey`/`documentPDF`, even though `POST /documents` itself never
 accepts `type=CDM` as input (system-generated only).
 
-## 6. Error responses
+## 6. Get the clients with still-open value for a serviceId — `GET /invoice-quickbooks-service/v1/documents/clients/{serviceId}`
+
+Mirrors the invoice-management-system's `GET /documents/clients/{serviceId}`: every Sales
+Receipt on file for this `serviceId`, netted against any RefundReceipt/CreditMemo already on
+file against its `productId` (the same accounting `POST /refunds` §4 and booking-Invoice
+cancellation use — see docs/OPERATIONS.md §6-§7), grouped by client. There, clients were
+deduped by NIF (tax id); here, by `clientHash` (this service's own dedup hash) instead, since
+that's the field this project actually maintains.
+
+```bash
+curl -H "auth-token: $AUTH_TOKEN" \
+  https://invoices.icligo.com/invoice-quickbooks-service/v1/documents/clients/48213
+```
+
+### 6.1 Response — `200 OK`
+
+A JSON array, one entry per distinct client with still-open value, shaped like:
+
+```json
+[
+  {
+    "clientHash": "CUST_ADF855F366D804...",
+    "name": "Jane Doe",
+    "email": "jane.doe@example.com",
+    "address": "Rua Example 123",
+    "country": "PT",
+    "total": 49.90,
+    "productValues": { "70021": 49.90 }
+  }
+]
+```
+
+- `total` — sum of this client's still-open Sales Receipt balances for this `serviceId`.
+- `productValues` — the same total, broken down per `productId`.
+- Sales Receipts with nothing left open (fully refunded via §4, or fully cancelled via a
+  booking Invoice's CreditMemo, docs/OPERATIONS.md §6) are omitted entirely — an **empty
+  array** means every Sales Receipt for this `serviceId` is fully settled, not that none ever
+  existed. There's no separate error for "serviceId not found" — an unknown `serviceId` also
+  just returns `[]`.
+- Unlike §3/§4, there's no proforma/"fee" concept in this system, so (unlike the reference
+  project) no `fee` field is returned at all.
+
+## 7. Credit a Sales Receipt via CreditMemo — `GET /invoice-quickbooks-service/v1/documents/invoices/creditnote/{controlKey}`
+
+Mirrors the invoice-management-system's `GET /documents/invoices/creditnote/{controlKey}` — but
+there, the target could be either a final invoice ("FAC" → NCC) or an advance invoice ("FAA" →
+NCA) depending on the `controlKey` prefix. This service has no Invoice-side credit-note path:
+`controlKey` here must identify a **Sales Receipt** (e.g. `"SRT70021..."`) — the same document
+type both §6 and the automatic booking-Invoice cancellation (docs/OPERATIONS.md §6) already
+credit against.
+
+Like the reference, this credits **whatever's still open**, not necessarily the Sales Receipt's
+full original amount — the same `TotalAmt` minus any RefundReceipt/CreditMemo already on file
+(§4, docs/OPERATIONS.md §6) accounting as everywhere else. Calling it again after it's already
+fully credited correctly reports "nothing to do" rather than crediting it a second time.
+
+```bash
+curl -H "auth-token: $AUTH_TOKEN" \
+  https://invoices.icligo.com/invoice-quickbooks-service/v1/documents/invoices/creditnote/<controlKey>
+```
+
+### 7.1 Response
+
+| Status | Meaning |
+|---|---|
+| `200` | A CreditMemo was created (or already existed from an earlier identical call) — body is the CreditMemo document, same shape as §3.5 |
+| `204` | This Sales Receipt has nothing left open to credit — no body |
+| `404` | No Sales Receipt document exists with this `controlKey` |
+| `502` | QuickBooks rejected or failed the CreditMemo request |
+
+Unlike the automatic cancellation that runs when a booking Invoice is created (best-effort —
+failures are only emailed to an admin, docs/OPERATIONS.md §6), a failure on **this** endpoint is
+**not** best-effort: you asked for this specific credit right now, so it fails the request
+(`502`) instead of silently emailing someone else about it.
+
+## 8. List a serviceId's documents / check if one is editable
+
+Two read-only `GET` endpoints mirroring the invoice-management-system's `GET
+/documents/invoices/{serviceId}/details` and `GET
+/documents/invoices/document/{controlKey}/editable`. There, "editable" meant an
+advance-invoice/quote document (`FAA`/`ESFAA`/`PRE*`) with a still-open balance; here, the
+equivalent "advance/prepaid" document type is a **Sales Receipt** (the same one §6/§7 already
+treat that way) — so `editable` is `true` only for a Sales Receipt with something still open
+(same `TotalAmt` minus RefundReceipt/CreditMemo accounting as §6/§7). Every Invoice,
+RefundReceipt and CreditMemo is always `editable: false`.
+
+### 8.1 `GET /invoice-quickbooks-service/v1/documents/invoices/{serviceId}/details`
+
+Every document (any type — INV/SRT/RRT/CDM) on file for this `serviceId`.
+
+```bash
+curl -H "auth-token: $AUTH_TOKEN" \
+  https://invoices.icligo.com/invoice-quickbooks-service/v1/documents/invoices/48213/details
+```
+
+`200 OK`, a JSON array (possibly empty — an unknown `serviceId` returns `[]`, not a `404`,
+matching the reference exactly):
+
+```json
+[
+  {
+    "id": "665f1a2b3c4d5e6f7a8b9c0d",
+    "controlKey": "SRT700212026",
+    "type": "SRT",
+    "docNumber": "SRC70021",
+    "date": "2026-07-14",
+    "value": 49.90,
+    "editable": true,
+    "documentPDF": "/invoice-quickbooks-service/v1/documents/SRT700212026/pdf",
+    "clientInvoiceInfo": { "name": "Jane Doe", "email": "jane.doe@example.com", "address": "Rua Example 123", "country": "PT" }
+  }
+]
+```
+
+### 8.2 `GET /invoice-quickbooks-service/v1/documents/invoices/document/{controlKey}/editable`
+
+```bash
+curl -H "auth-token: $AUTH_TOKEN" \
+  https://invoices.icligo.com/invoice-quickbooks-service/v1/documents/invoices/document/SRT700212026/editable
+```
+
+`200 OK`, always: `{"editable": true}` or `{"editable": false}`. An unknown `controlKey`, or one
+identifying an Invoice/RefundReceipt/CreditMemo, also returns `{"editable": false}` — same
+silent-false behavior as the reference, no `404`.
+
+## 9. Error responses
 
 Every error returns a JSON body shaped like:
 
@@ -257,7 +382,7 @@ Every error returns a JSON body shaped like:
 | `201` | Created | — |
 | `400` | Request failed validation — missing/invalid `type`, `type=RRT`/`type=CDM` on `/documents` (§3), missing `clientInvoiceInfo`, missing `serviceId`/`productId` (required for every type), no open Sales Receipts / non-positive `value` on `/refunds` (§4), or missing `clientInvoiceInfo.name`/`address`/`country`. `details` lists every violation where applicable. | No — fix the payload |
 | `401` | Missing/wrong `auth-token` header | No — fix the header |
-| `502` | QuickBooks itself (or the Temporal workflow orchestrating the call) rejected or failed the request — e.g. invalid customer data QuickBooks itself rejects, QuickBooks API outage, an expired/revoked QuickBooks OAuth connection on this service's side, the configured PaymentMethod/deposit-Account not existing in the company (`SRT`, or `INV` when `productType` isn't `"Reserva"`, §8), or the Payment itself failing to create for a non-`"Reserva"` `INV` — that failure fails the whole request (the Invoice itself was still created in QuickBooks though, just left unpaid; an admin is emailed about it too, docs/OPERATIONS.md §8) | Transient causes: yes, with backoff. A missing PaymentMethod/Account is a standing config problem in QuickBooks, not transient — retrying won't help until it's created there |
+| `502` | QuickBooks itself (or the Temporal workflow orchestrating the call) rejected or failed the request — e.g. invalid customer data QuickBooks itself rejects, QuickBooks API outage, an expired/revoked QuickBooks OAuth connection on this service's side, the configured PaymentMethod/deposit-Account not existing in the company (`SRT`, or `INV` when `productType` isn't `"Reserva"`, §9), or the Payment itself failing to create for a non-`"Reserva"` `INV` — that failure fails the whole request (the Invoice itself was still created in QuickBooks though, just left unpaid; an admin is emailed about it too, docs/OPERATIONS.md §8) | Transient causes: yes, with backoff. A missing PaymentMethod/Account is a standing config problem in QuickBooks, not transient — retrying won't help until it's created there |
 | `500` | Unexpected internal error | Yes, with backoff |
 
 `message` is safe to log; don't parse it programmatically — branch on `status` only. The
@@ -265,7 +390,7 @@ Every error returns a JSON body shaped like:
 folded into `message`), so if you need the raw QuickBooks fault for support tickets, capture
 the full response body and this service's own logs (correlate by timestamp).
 
-## 7. Timeouts and retries — what to expect on your side
+## 10. Timeouts and retries — what to expect on your side
 
 Each document creation runs as a Temporal workflow with its own internal retries against
 QuickBooks: the customer find-or-create step retries up to 5 times (2s/4s/8s/16s backoff,
@@ -280,10 +405,10 @@ to 3 times (3s/6s/12s backoff, 45s timeout per attempt). That means:
 - Set your HTTP client timeout to **at least 120s** for this endpoint to avoid client-side
   timeouts racing the server-side retry loop. `POST /refunds` can create multiple documents
   sequentially, so budget accordingly if several Sales Receipts are open for a `serviceId`.
-- A client-side timeout does **not** mean the request failed server-side — see §8 before
+- A client-side timeout does **not** mean the request failed server-side — see §11 before
   deciding whether it's safe to retry.
 
-## 8. Idempotency
+## 11. Idempotency
 
 **Repeating an already-completed request is safe.** Document creation is keyed by a
 server-computed `controlKey` = `type + productId + suffix + serie`, where `suffix` is
@@ -317,12 +442,12 @@ boundary (e.g. a request from Dec 31 retried on Jan 1); same-year retries are un
 requests for the same brand-new key race each other within the same few hundred milliseconds
 (before either has been persisted), both can reach QuickBooks and one of them will fail —
 surfaced as `502` for the loser, not `409`, since the failure happens inside the Temporal
-workflow (see §6). This is a narrow window and not a concern for sequential retries; it
+workflow (see §9). This is a narrow window and not a concern for sequential retries; it
 mainly matters if your own service could plausibly fire two near-simultaneous requests for
 the same `serviceId`/`productId`/`refundId` (e.g. a double-click or a duplicate queue
 message) — in that case, dedupe on your side before calling, if you can.
 
-## 9. Getting your `auth-token` value
+## 12. Getting your `auth-token` value
 
 The value lives in this service's `application.yml` (`spring.application.tokenValue`) —
 ask whoever manages that deployment for the current value rather than reading it out of a

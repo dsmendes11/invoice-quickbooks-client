@@ -25,6 +25,8 @@ import java.time.Year;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.NoSuchElementException;
+import java.util.Optional;
 
 /**
  * When a "Reserva" (booking) Invoice is created for a {@code serviceId}, any prepaid Sales
@@ -34,10 +36,13 @@ import java.util.List;
  * the original Sales Receipt's line items in proportion to their share of the total, so the
  * CreditMemo's line detail mirrors the original sale rather than collapsing it into one lump sum.
  *
- * <p>Deliberately best-effort: a failure cancelling one Sales Receipt (e.g. a line's Item no
- * longer exists in QuickBooks) is logged and alerted by email, but never propagated — it must
- * not block the Invoice creation that triggered this, nor prevent cancelling any other matching
- * Sales Receipt.
+ * <p>{@link #cancelSalesReceiptsForServiceId} (triggered automatically by a booking Invoice) is
+ * deliberately best-effort: a failure cancelling one Sales Receipt (e.g. a line's Item no longer
+ * exists in QuickBooks) is logged and alerted by email, but never propagated — it must not block
+ * the Invoice creation that triggered this, nor prevent cancelling any other matching Sales
+ * Receipt. {@link #cancelSalesReceiptByControlKey} (a direct, caller-requested action via
+ * {@code GET /documents/invoices/creditnote/{controlKey}}) is <b>not</b> best-effort — a failure
+ * propagates to the caller, since they explicitly asked for this specific credit right now.
  */
 @Slf4j
 @Service
@@ -72,16 +77,46 @@ public class SalesReceiptCancellationService {
         }
     }
 
-    private void cancelOne(ActiveSalesReceipt activeSalesReceipt) throws QuickBooksException {
+    /**
+     * Mirrors the invoice-management-system's {@code GET /documents/invoices/creditnote/{controlKey}}
+     * — credits, via CreditMemo, whatever's still open on the Sales Receipt identified by
+     * {@code controlKey} (this project's advance-invoice equivalent is a Sales Receipt, not an
+     * Invoice, so unlike the reference this only ever targets Sales Receipts). Recomputes the
+     * remaining balance fresh every call (same {@link ActiveSalesReceiptFinder} accounting as
+     * everything else), so a Sales Receipt already fully credited/refunded correctly reports
+     * "nothing to do" rather than crediting it again.
+     *
+     * @return the created (or, on idempotent replay, already-existing) CreditMemo document, or
+     *         empty if this Sales Receipt has nothing left open to credit.
+     * @throws NoSuchElementException if {@code controlKey} doesn't identify a Sales Receipt
+     *         document at all.
+     * @throws QuickBooksException if QuickBooks rejects or fails the CreditMemo creation.
+     */
+    public Optional<QuickBooksDocument> cancelSalesReceiptByControlKey(String controlKey) throws QuickBooksException {
+        QuickBooksDocument salesReceiptDoc = documentRepository.findByControlKey(controlKey)
+                .filter(doc -> SalesDocumentTypes.SALES_RECEIPT.getValue().equals(doc.getType()))
+                .orElseThrow(() -> new NoSuchElementException("No SalesReceipt document found with controlKey=" + controlKey));
+
+        Optional<ActiveSalesReceipt> active = activeSalesReceiptFinder.findActiveForDocument(salesReceiptDoc);
+        if (active.isEmpty()) {
+            log.info("SalesReceipt controlKey={} has nothing left open to credit", controlKey);
+            return Optional.empty();
+        }
+
+        return Optional.of(cancelOne(active.get()));
+    }
+
+    private QuickBooksDocument cancelOne(ActiveSalesReceipt activeSalesReceipt) throws QuickBooksException {
         QuickBooksDocument salesReceiptDoc = activeSalesReceipt.document();
         SalesReceipt salesReceipt = activeSalesReceipt.salesReceipt();
         String productId = salesReceiptDoc.getProductId();
 
         String controlKey = buildControlKey(productId);
-        if (documentRepository.findByControlKey(controlKey).isPresent()) {
+        Optional<QuickBooksDocument> existing = documentRepository.findByControlKey(controlKey);
+        if (existing.isPresent()) {
             log.info("Idempotent replay for controlKey={} – SalesReceipt productId={} already cancelled",
                     controlKey, productId);
-            return;
+            return existing.get();
         }
 
         if (salesReceipt.getLine() == null || salesReceipt.getLine().isEmpty()) {
@@ -95,7 +130,7 @@ public class SalesReceiptCancellationService {
         log.info("Created CreditMemo for SalesReceipt productId={} amount={}",
                 productId, activeSalesReceipt.availableBalance());
 
-        saveDocument(salesReceiptDoc, controlKey, created, creditLines);
+        return saveDocument(salesReceiptDoc, controlKey, created, creditLines);
     }
 
     private String buildControlKey(String productId) {
@@ -163,7 +198,7 @@ public class SalesReceiptCancellationService {
      * (falling back to its description) to rebuild an {@code items} list, since {@code Line}
      * doesn't carry the original request-level {@code ItemDto} shape.
      */
-    private void saveDocument(QuickBooksDocument salesReceiptDoc, String controlKey, CreditMemo creditMemo, List<Line> creditLines) {
+    private QuickBooksDocument saveDocument(QuickBooksDocument salesReceiptDoc, String controlKey, CreditMemo creditMemo, List<Line> creditLines) {
         QuickBooksDocument document = new QuickBooksDocument();
         document.setType(SalesDocumentTypes.CREDIT_MEMO.getValue());
         document.setServiceId(salesReceiptDoc.getServiceId());
@@ -175,7 +210,7 @@ public class SalesReceiptCancellationService {
         document.setInvoice(creditMemo);
         document.setItems(creditLines.stream().map(this::toItemDto).toList());
         document.setDocumentPDF(basePath + "/documents/" + controlKey + "/pdf");
-        documentRepository.save(document);
+        return documentRepository.save(document);
     }
 
     private ItemDto toItemDto(Line line) {

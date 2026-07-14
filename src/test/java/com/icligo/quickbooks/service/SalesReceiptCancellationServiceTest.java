@@ -15,9 +15,11 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.math.BigDecimal;
 import java.time.Year;
 import java.util.List;
+import java.util.NoSuchElementException;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentCaptor.forClass;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -171,6 +173,83 @@ class SalesReceiptCancellationServiceTest {
         service.cancelSalesReceiptsForServiceId("srv-4");
 
         verify(alertService).sendCreditMemoCancellationFailedAlert(eq("srv-4"), eq("prod-4"), anyString());
+        verify(documentRepository, never()).save(any());
+    }
+
+    @Test
+    void cancelByControlKeyCreditsWhatIsStillOpenAndReturnsTheCreditMemoDocument() throws Exception {
+        SalesReceipt salesReceipt = salesReceipt("SRCprod-8", new BigDecimal("50.00"), line("Day tour", new BigDecimal("50.00")));
+        QuickBooksDocument salesReceiptDoc = salesReceiptDoc("prod-8", "srv-8");
+        salesReceiptDoc.setControlKey("SRTprod-82026");
+        salesReceiptDoc.setInvoice(salesReceipt);
+
+        when(documentRepository.findByControlKey("SRTprod-82026")).thenReturn(Optional.of(salesReceiptDoc));
+        when(activeSalesReceiptFinder.findActiveForDocument(salesReceiptDoc))
+                .thenReturn(Optional.of(new ActiveSalesReceipt(salesReceiptDoc, salesReceipt, new BigDecimal("50.00"))));
+        when(creditMemoService.createCreditMemo(any())).thenReturn(CreditMemo.builder().id("qb-cdm-8").build());
+        when(documentRepository.findByControlKey(controlKey("prod-8"))).thenReturn(Optional.empty());
+        when(documentRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        Optional<QuickBooksDocument> result = service.cancelSalesReceiptByControlKey("SRTprod-82026");
+
+        assertThat(result).isPresent();
+        assertThat(result.get().getType()).isEqualTo("CDM");
+        assertThat(result.get().getControlKey()).isEqualTo(controlKey("prod-8"));
+        verifyNoInteractions(alertService);
+    }
+
+    @Test
+    void cancelByControlKeyReturnsEmptyWhenNothingIsLeftOpen() throws Exception {
+        QuickBooksDocument salesReceiptDoc = salesReceiptDoc("prod-9", "srv-9");
+        salesReceiptDoc.setControlKey("SRTprod-92026");
+
+        when(documentRepository.findByControlKey("SRTprod-92026")).thenReturn(Optional.of(salesReceiptDoc));
+        when(activeSalesReceiptFinder.findActiveForDocument(salesReceiptDoc)).thenReturn(Optional.empty());
+
+        Optional<QuickBooksDocument> result = service.cancelSalesReceiptByControlKey("SRTprod-92026");
+
+        assertThat(result).isEmpty();
+        verifyNoInteractions(creditMemoService, alertService);
+    }
+
+    @Test
+    void cancelByControlKeyThrowsNoSuchElementWhenControlKeyDoesNotExist() {
+        when(documentRepository.findByControlKey("missing")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.cancelSalesReceiptByControlKey("missing"))
+                .isInstanceOf(NoSuchElementException.class);
+        verifyNoInteractions(activeSalesReceiptFinder, creditMemoService, alertService);
+    }
+
+    @Test
+    void cancelByControlKeyThrowsNoSuchElementWhenDocumentIsNotASalesReceipt() {
+        QuickBooksDocument invoiceDoc = new QuickBooksDocument();
+        invoiceDoc.setType(SalesDocumentTypes.INVOICE.getValue());
+        invoiceDoc.setControlKey("INV700212026");
+        when(documentRepository.findByControlKey("INV700212026")).thenReturn(Optional.of(invoiceDoc));
+
+        assertThatThrownBy(() -> service.cancelSalesReceiptByControlKey("INV700212026"))
+                .isInstanceOf(NoSuchElementException.class);
+        verifyNoInteractions(activeSalesReceiptFinder, creditMemoService, alertService);
+    }
+
+    @Test
+    void cancelByControlKeyPropagatesQuickBooksFailureInsteadOfEmailingAndSwallowing() throws Exception {
+        SalesReceipt salesReceipt = salesReceipt("SRCprod-10", new BigDecimal("25.00"), line("Day tour", new BigDecimal("25.00")));
+        QuickBooksDocument salesReceiptDoc = salesReceiptDoc("prod-10", "srv-10");
+        salesReceiptDoc.setControlKey("SRTprod-102026");
+        salesReceiptDoc.setInvoice(salesReceipt);
+
+        when(documentRepository.findByControlKey("SRTprod-102026")).thenReturn(Optional.of(salesReceiptDoc));
+        when(activeSalesReceiptFinder.findActiveForDocument(salesReceiptDoc))
+                .thenReturn(Optional.of(new ActiveSalesReceipt(salesReceiptDoc, salesReceipt, new BigDecimal("25.00"))));
+        when(documentRepository.findByControlKey(controlKey("prod-10"))).thenReturn(Optional.empty());
+        when(creditMemoService.createCreditMemo(any()))
+                .thenThrow(new QuickBooksException("QuickBooks Item 'Day tour' does not exist in this company."));
+
+        assertThatThrownBy(() -> service.cancelSalesReceiptByControlKey("SRTprod-102026"))
+                .isInstanceOf(QuickBooksException.class);
+        verifyNoInteractions(alertService);
         verify(documentRepository, never()).save(any());
     }
 

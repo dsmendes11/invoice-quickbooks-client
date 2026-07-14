@@ -12,6 +12,8 @@ public interface QuickBooksDocumentRepository extends MongoRepository<QuickBooks
 
     Optional<QuickBooksDocument> findByControlKey(String controlKey);
 
+    List<QuickBooksDocument> findByServiceId(String serviceId);
+
     List<QuickBooksDocument> findByTypeAndServiceId(String type, String serviceId);
 
     List<QuickBooksDocument> findByTypeAndProductId(String type, String productId);
