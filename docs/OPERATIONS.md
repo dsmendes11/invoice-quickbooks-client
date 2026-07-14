@@ -131,9 +131,14 @@ supersedes what was originally billed as a prepaid sale.
   open in QuickBooks and needs manual cancellation.
 - **Persisted like every other document type**: each CreditMemo is saved as a normal
   `QuickBooksDocument` (`type=CDM`), with its own `controlKey` (`"CDM" + productId + serie`, no
-  suffix — see docs/CLIENT_INTEGRATION.md §8) and `documentPDF` link, checked for existence
+  suffix — see docs/CLIENT_INTEGRATION.md §11) and `documentPDF` link, checked for existence
   *before* calling QuickBooks. If this activity is retried (e.g. by Temporal) for a `productId`
   already cancelled this year, it's skipped rather than creating a duplicate CreditMemo.
+- **Returned to the caller**: every CreditMemo successfully created this way is included in
+  `POST /documents`' response array, alongside the Invoice itself (see docs/CLIENT_INTEGRATION.md
+  §3.5) — `[INV, CDM, CDM]` for two cancelled Sales Receipts, just `[INV]` if none were open. A
+  CreditMemo that failed (emailed above) is simply absent from that array, not represented by an
+  error entry.
 
 ## 7. Refunds are allocated across open Sales Receipts, not caller-specified
 

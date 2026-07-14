@@ -11,6 +11,9 @@ import io.temporal.spring.boot.WorkflowImpl;
 import io.temporal.workflow.Workflow;
 import lombok.extern.slf4j.Slf4j;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import static com.icligo.quickbooks.temporal.activity.QuickBooksActivitiesImpl.TASK_QUEUE;
 
 /**
@@ -38,7 +41,7 @@ public class CreateInvoiceWorkflowImpl implements CreateInvoiceWorkflow {
             Workflow.newActivityStub(QuickBooksActivities.class, TemporalActivityOptions.PERSIST);
 
     @Override
-    public QuickBooksDocument execute(QuickBooksDocument document) {
+    public List<QuickBooksDocument> execute(QuickBooksDocument document) {
         Workflow.getLogger(CreateInvoiceWorkflowImpl.class)
                 .info("CreateInvoiceWorkflow started – serviceId={}", document.getServiceId());
 
@@ -63,8 +66,9 @@ public class CreateInvoiceWorkflowImpl implements CreateInvoiceWorkflow {
         // see SalesReceiptCancellationService, but never fail this workflow). Any other
         // productType means the invoice is paid immediately: record a Payment for its full
         // amount instead — this step is required, a failure here fails the workflow.
+        List<QuickBooksDocument> cancelledSalesReceipts = List.of();
         if (ProductTypes.BOOKING.getValue().equalsIgnoreCase(document.getProductType())) {
-            documentActivity.cancelSalesReceiptsForBooking(document.getServiceId());
+            cancelledSalesReceipts = documentActivity.cancelSalesReceiptsForBooking(document.getServiceId());
         } else {
             documentActivity.createPayment(document, invoice, customer.getId(), customer.getDisplayName());
         }
@@ -75,6 +79,11 @@ public class CreateInvoiceWorkflowImpl implements CreateInvoiceWorkflow {
         Workflow.getLogger(CreateInvoiceWorkflowImpl.class)
                 .info("CreateInvoiceWorkflow completed – invoiceId={}", invoice.getId());
 
-        return saved;
+        // The Invoice itself first, followed by any CreditMemos emitted cancelling prior Sales
+        // Receipts (e.g. [INV, CDM, CDM]) — empty for a non-booking invoice.
+        List<QuickBooksDocument> result = new ArrayList<>();
+        result.add(saved);
+        result.addAll(cancelledSalesReceipts);
+        return result;
     }
 }

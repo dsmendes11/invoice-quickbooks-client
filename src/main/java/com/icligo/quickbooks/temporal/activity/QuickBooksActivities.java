@@ -10,6 +10,8 @@ import com.icligo.quickbooks.model.document.ClientInvoiceInfo;
 import io.temporal.activity.ActivityInterface;
 import io.temporal.activity.ActivityMethod;
 
+import java.util.List;
+
 /**
  * Temporal Activities for QuickBooks operations.
  *
@@ -56,9 +58,12 @@ public interface QuickBooksActivities {
      * called when a booking (Reserva) Invoice is created for that service. Best-effort: never
      * throws, so it never fails the Invoice-creation workflow that calls it; failures are logged
      * and emailed to the admin instead (see {@code SalesReceiptCancellationService}).
+     *
+     * @return the CreditMemo documents actually created, so the workflow can include them
+     *         alongside the Invoice itself in the documents it returns to the caller.
      */
     @ActivityMethod
-    void cancelSalesReceiptsForBooking(String serviceId);
+    List<QuickBooksDocument> cancelSalesReceiptsForBooking(String serviceId);
 
     /**
      * Creates a Payment applying the Invoice's full amount, immediately marking it paid —

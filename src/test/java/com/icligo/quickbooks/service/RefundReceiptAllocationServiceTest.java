@@ -44,7 +44,7 @@ class RefundReceiptAllocationServiceTest {
     void singleActiveSalesReceiptWithPartialRefundCreatesOneRefundReceiptForTheRequestedValue() {
         ActiveSalesReceipt active = active("prod-1", "srv-1", "Airport transfer", new BigDecimal("100.00"));
         when(activeSalesReceiptFinder.findActive("srv-1")).thenReturn(List.of(active));
-        when(temporalDocumentService.create(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(temporalDocumentService.create(any())).thenAnswer(inv -> List.of((QuickBooksDocument) inv.getArgument(0)));
 
         List<QuickBooksDocument> created = service.createAllocatedRefundReceipts(request("srv-1", "rfd-1", "30.00"));
 
@@ -67,7 +67,7 @@ class RefundReceiptAllocationServiceTest {
         ActiveSalesReceipt a = active("prod-a", "srv-2", "Day tour", new BigDecimal("40.00"));
         ActiveSalesReceipt b = active("prod-b", "srv-2", "Day tour", new BigDecimal("60.00"));
         when(activeSalesReceiptFinder.findActive("srv-2")).thenReturn(List.of(a, b));
-        when(temporalDocumentService.create(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(temporalDocumentService.create(any())).thenAnswer(inv -> List.of((QuickBooksDocument) inv.getArgument(0)));
 
         // requested 500 >> total available 100 → both fully consumed, excess silently ignored
         List<QuickBooksDocument> created = service.createAllocatedRefundReceipts(request("srv-2", "rfd-2", "500.00"));
@@ -83,7 +83,7 @@ class RefundReceiptAllocationServiceTest {
         ActiveSalesReceipt a = active("prod-c", "srv-3", "Day tour", new BigDecimal("70.00"));
         ActiveSalesReceipt b = active("prod-d", "srv-3", "Day tour", new BigDecimal("30.00"));
         when(activeSalesReceiptFinder.findActive("srv-3")).thenReturn(List.of(a, b));
-        when(temporalDocumentService.create(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(temporalDocumentService.create(any())).thenAnswer(inv -> List.of((QuickBooksDocument) inv.getArgument(0)));
 
         // total available = 100, requested = 50 → proportional: 70% share=35.00, 30% share=15.00
         List<QuickBooksDocument> created = service.createAllocatedRefundReceipts(request("srv-3", "rfd-3", "50.00"));
@@ -105,7 +105,7 @@ class RefundReceiptAllocationServiceTest {
         when(temporalDocumentService.create(argThat(d -> d != null && "prod-e".equals(d.getProductId()))))
                 .thenThrow(new RuntimeException("QuickBooks Item 'Day tour' does not exist in this company."));
         when(temporalDocumentService.create(argThat(d -> d != null && "prod-f".equals(d.getProductId()))))
-                .thenAnswer(inv -> inv.getArgument(0));
+                .thenAnswer(inv -> List.of((QuickBooksDocument) inv.getArgument(0)));
 
         // total=100, requested=100 → both fully consumed (50 each)
         List<QuickBooksDocument> created = service.createAllocatedRefundReceipts(request("srv-4", "rfd-4", "100.00"));

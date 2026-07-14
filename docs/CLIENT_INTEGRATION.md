@@ -51,8 +51,8 @@ cannot be created here** — `type=RRT` is rejected outright (`400`); see §4.
 |---|---|---|---|
 | `type` | string | **yes** | abbreviated code, not the long-form name: `INV` (Invoice) or `SRT` (SalesReceipt) (case-insensitive). `RRT` is rejected — refunds go through `POST /refunds` (§4) |
 | `clientInvoiceInfo` | object | **yes** | see below — customer is found-or-created automatically |
-| `serviceId` | string | **yes, for every type** | becomes QuickBooks `DocNumber` = `"INV" + serviceId` when `type=INV`; required for every type regardless, for cross-type context — does **not** feed into the internal `controlKey` (see §11). Also what `POST /refunds` matches Sales Receipts by |
-| `productId` | string | **yes, for every type** | becomes `DocNumber` = `"SRC"+productId` when `type=SRT`; required for every type regardless, and **is** the identifier used in the internal `controlKey` (see §11) |
+| `serviceId` | string | **yes, for every type** | required for every type, for cross-type context — does **not** feed into the internal `controlKey` or QuickBooks `DocNumber` (see §11). Also what `POST /refunds` matches Sales Receipts by |
+| `productId` | string | **yes, for every type** | required for every type, and **is** the identifier used in the internal `controlKey` (see §11) — which is also what QuickBooks' own `DocNumber` is set to on every document (Invoice/SalesReceipt/RefundReceipt/CreditMemo), so the two are always the same value |
 | `description` | string | no | for `SRT`/refund-allocated `RRT`, mapped to the QuickBooks document's customer memo; for `INV`, no customer memo is set (QuickBooks' `CustomerMemo` is left empty), but `description` still replaces every line's `Description` when present (§3.3) |
 | `microsite` | string | no | defaults to `"icligous"` |
 | `paymentMethod` | integer | no | used for `SRT`, and for `INV` when `productType` isn't `"Reserva"` (see below — carried onto the Payment that's created). Every non-null value currently resolves to the QuickBooks PaymentMethod **"Credit Card"** (per-code mapping isn't implemented yet) — the request fails (`502`) if that PaymentMethod doesn't exist in the company. Omitted/`null` → no payment method sent at all, QuickBooks applies the account default. Carried over automatically onto any RefundReceipt `POST /refunds` later creates against a Sales Receipt |
@@ -144,12 +144,25 @@ curl -X POST https://invoices.icligo.com/invoice-quickbooks-service/v1/documents
 
 ### 3.5 Response — `201 Created`
 
-Same shape as the request, plus:
+A **JSON array** of every document this call emitted — not just the one you asked for. Each
+element is shaped like the request, plus:
 - `id` — Mongo id of the saved record (internal; there's no GET endpoint for the JSON document itself yet, only direct DB access)
 - `controlKey` — the server-computed idempotency key (§11) and the public identifier for this document — use it with §5 to fetch the PDF
 - `documentPDF` — relative link to this document's PDF, equivalent to `GET {api.base-path}/documents/{controlKey}/pdf` (§5) — a convenience so you don't have to build the URL yourself
-- `invoice` — the actual QuickBooks object (`Invoice`/`SalesReceipt`) with its QuickBooks `Id`, `TotalAmt`, `Balance`, etc. For a non-`"Reserva"` `INV`, this is still the **Invoice**, not the Payment created alongside it (docs/OPERATIONS.md §8) — the Payment's own QuickBooks `Id` isn't returned here; look it up in QuickBooks by the Invoice's `Id` (`LinkedTxn`) if you need it
+- `invoice` — the actual QuickBooks object (`Invoice`/`SalesReceipt`/`CreditMemo`) with its QuickBooks `Id`, `TotalAmt`, `Balance`, etc. For a non-`"Reserva"` `INV`, this is still the **Invoice**, not the Payment created alongside it (docs/OPERATIONS.md §8) — the Payment's own QuickBooks `Id` isn't returned here; look it up in QuickBooks by the Invoice's `Id` (`LinkedTxn`) if you need it
 - `clientInvoiceInfo.clientId` / `clientHash` — the resolved QuickBooks customer id
+
+**Array length depends on what actually got created:**
+- `SRT`, or a plain (non-`"Reserva"`) `INV` — always exactly **one** element: `[SRT]` or `[INV]`.
+- A `"Reserva"` `INV` — the Invoice itself, **plus** one `CDM` (CreditMemo) per Sales Receipt it
+  cancelled for the same `serviceId` (docs/OPERATIONS.md §6), e.g. `[INV]` if there was nothing
+  to cancel, or `[INV, CDM, CDM]` if two Sales Receipts were open. Order is always the Invoice
+  first, cancelled CreditMemos after. Cancellation is best-effort (§8's `productType` row) — a
+  CreditMemo that failed to create is alerted by email, not included in this array, and does
+  **not** fail the request; check the array's contents rather than assuming every prior Sales
+  Receipt was cancelled just because the call returned `201`.
+- An idempotent replay (§11) always returns a single-element array with the original document —
+  it does not re-derive or look up any CreditMemos that may have been created the first time.
 
 ## 4. Refund a Sales Receipt — `POST /invoice-quickbooks-service/v1/refunds`
 
@@ -303,7 +316,7 @@ curl -H "auth-token: $AUTH_TOKEN" \
 
 | Status | Meaning |
 |---|---|
-| `200` | A CreditMemo was created (or already existed from an earlier identical call) — body is the CreditMemo document, same shape as §3.5 |
+| `200` | A CreditMemo was created (or already existed from an earlier identical call) — body is a single-element JSON array `[CDM]`, same shape as §3.5 |
 | `204` | This Sales Receipt has nothing left open to credit — no body |
 | `404` | No Sales Receipt document exists with this `controlKey` |
 | `502` | QuickBooks rejected or failed the CreditMemo request |
@@ -342,7 +355,7 @@ matching the reference exactly):
     "id": "665f1a2b3c4d5e6f7a8b9c0d",
     "controlKey": "SRT700212026",
     "type": "SRT",
-    "docNumber": "SRC70021",
+    "docNumber": "SRT700212026",
     "date": "2026-07-14",
     "value": 49.90,
     "editable": true,

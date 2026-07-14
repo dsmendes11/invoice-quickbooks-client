@@ -61,7 +61,7 @@ public class RefundReceiptAllocationService {
             String productId = allocation.activeSalesReceipt().document().getProductId();
             try {
                 QuickBooksDocument refundDoc = buildRefundDocument(allocation, request.getRefundId());
-                created.add(temporalDocumentService.create(refundDoc));
+                created.addAll(temporalDocumentService.create(refundDoc));
                 log.info("Created RefundReceipt for productId={} serviceId={} amount={}",
                         productId, request.getServiceId(), allocation.amount());
             } catch (Exception e) {

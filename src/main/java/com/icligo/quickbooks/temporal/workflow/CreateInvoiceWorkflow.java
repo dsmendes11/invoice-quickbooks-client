@@ -4,6 +4,8 @@ import com.icligo.quickbooks.model.QuickBooksDocument;
 import io.temporal.workflow.WorkflowInterface;
 import io.temporal.workflow.WorkflowMethod;
 
+import java.util.List;
+
 /**
  * Temporal Workflow: Create Invoice (with find-or-create customer).
  *
@@ -17,6 +19,11 @@ import io.temporal.workflow.WorkflowMethod;
 @WorkflowInterface
 public interface CreateInvoiceWorkflow {
 
+    /**
+     * @return the documents emitted by this call — the Invoice itself, plus, when it's a booking
+     *         (Reserva) invoice, any CreditMemos created cancelling prior Sales Receipts for the
+     *         same serviceId (e.g. [INV, CDM, CDM]). Just [INV] for a non-booking invoice.
+     */
     @WorkflowMethod
-    QuickBooksDocument execute(QuickBooksDocument document);
+    List<QuickBooksDocument> execute(QuickBooksDocument document);
 }

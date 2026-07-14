@@ -46,8 +46,9 @@ class SalesReceiptCancellationServiceTest {
     void noActiveSalesReceiptsCreatesNoCreditMemo() {
         when(activeSalesReceiptFinder.findActive("svc-1")).thenReturn(List.of());
 
-        service.cancelSalesReceiptsForServiceId("svc-1");
+        List<QuickBooksDocument> result = service.cancelSalesReceiptsForServiceId("svc-1");
 
+        assertThat(result).isEmpty();
         verifyNoInteractions(creditMemoService, alertService, documentRepository);
     }
 
@@ -60,18 +61,23 @@ class SalesReceiptCancellationServiceTest {
 
         when(activeSalesReceiptFinder.findActive("srv-1")).thenReturn(List.of(active));
         when(creditMemoService.createCreditMemo(any())).thenReturn(CreditMemo.builder().id("qb-cdm-1").build());
+        when(documentRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
-        service.cancelSalesReceiptsForServiceId("srv-1");
+        List<QuickBooksDocument> result = service.cancelSalesReceiptsForServiceId("srv-1");
 
         var captor = forClass(CreditMemo.class);
         verify(creditMemoService).createCreditMemo(captor.capture());
         CreditMemo creditMemo = captor.getValue();
 
-        assertThat(creditMemo.getDocNumber()).isEqualTo("NCCprod-1");
+        assertThat(creditMemo.getDocNumber()).isEqualTo(controlKey("prod-1"));
         assertThat(creditMemo.getLine()).hasSize(2);
         assertThat(creditMemo.getLine().get(0).getAmount()).isEqualByComparingTo("70.00");
         assertThat(creditMemo.getLine().get(1).getAmount()).isEqualByComparingTo("30.00");
         verifyNoInteractions(alertService);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).getType()).isEqualTo("CDM");
+        assertThat(result.get(0).getControlKey()).isEqualTo(controlKey("prod-1"));
     }
 
     @Test
@@ -170,8 +176,9 @@ class SalesReceiptCancellationServiceTest {
         when(creditMemoService.createCreditMemo(any()))
                 .thenThrow(new QuickBooksException("QuickBooks Item 'Day tour' does not exist in this company."));
 
-        service.cancelSalesReceiptsForServiceId("srv-4");
+        List<QuickBooksDocument> result = service.cancelSalesReceiptsForServiceId("srv-4");
 
+        assertThat(result).isEmpty();
         verify(alertService).sendCreditMemoCancellationFailedAlert(eq("srv-4"), eq("prod-4"), anyString());
         verify(documentRepository, never()).save(any());
     }

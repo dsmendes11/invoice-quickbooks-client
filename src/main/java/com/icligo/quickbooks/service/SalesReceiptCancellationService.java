@@ -57,17 +57,25 @@ public class SalesReceiptCancellationService {
     @Value("${api.base-path}")
     private String basePath;
 
-    public void cancelSalesReceiptsForServiceId(String serviceId) {
+    /**
+     * @return the CreditMemo documents actually created (or, on idempotent replay, already
+     *         existing) — one per Sales Receipt successfully cancelled. A Sales Receipt whose
+     *         cancellation failed is alerted (see above) but omitted here, matching {@link
+     *         com.icligo.quickbooks.service.RefundReceiptAllocationService}'s same best-effort
+     *         partial-results convention.
+     */
+    public List<QuickBooksDocument> cancelSalesReceiptsForServiceId(String serviceId) {
         List<ActiveSalesReceipt> active = activeSalesReceiptFinder.findActive(serviceId);
 
         if (active.isEmpty()) {
             log.info("No open Sales Receipts found for serviceId={} — nothing to cancel", serviceId);
-            return;
+            return List.of();
         }
 
+        List<QuickBooksDocument> cancelled = new ArrayList<>();
         for (ActiveSalesReceipt activeSalesReceipt : active) {
             try {
-                cancelOne(activeSalesReceipt);
+                cancelled.add(cancelOne(activeSalesReceipt));
             } catch (Exception e) {
                 String productId = activeSalesReceipt.document().getProductId();
                 log.error("Failed to cancel SalesReceipt productId={} for serviceId={}: {}",
@@ -75,6 +83,7 @@ public class SalesReceiptCancellationService {
                 alertService.sendCreditMemoCancellationFailedAlert(serviceId, productId, e.getMessage());
             }
         }
+        return cancelled;
     }
 
     /**
@@ -125,7 +134,7 @@ public class SalesReceiptCancellationService {
         }
 
         List<Line> creditLines = buildCreditLines(salesReceiptDoc, salesReceipt, activeSalesReceipt.availableBalance());
-        CreditMemo creditMemo = buildCreditMemo(salesReceiptDoc, salesReceipt, creditLines);
+        CreditMemo creditMemo = buildCreditMemo(salesReceiptDoc, salesReceipt, creditLines, controlKey);
         CreditMemo created = creditMemoService.createCreditMemo(creditMemo);
         log.info("Created CreditMemo for SalesReceipt productId={} amount={}",
                 productId, activeSalesReceipt.availableBalance());
@@ -178,10 +187,10 @@ public class SalesReceiptCancellationService {
         return creditLines;
     }
 
-    private CreditMemo buildCreditMemo(QuickBooksDocument salesReceiptDoc, SalesReceipt salesReceipt, List<Line> creditLines) {
+    private CreditMemo buildCreditMemo(QuickBooksDocument salesReceiptDoc, SalesReceipt salesReceipt, List<Line> creditLines, String controlKey) {
         return CreditMemo.builder()
                 .customerRef(salesReceipt.getCustomerRef())
-                .docNumber("NCC" + salesReceiptDoc.getProductId())
+                .docNumber(controlKey)
                 .txnDate(LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE))
                 .customerMemo(MemoRef.builder()
                         .value("Cancellation of SalesReceipt " + salesReceipt.getDocNumber())

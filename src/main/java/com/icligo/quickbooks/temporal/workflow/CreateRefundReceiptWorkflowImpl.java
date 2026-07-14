@@ -9,6 +9,8 @@ import com.icligo.quickbooks.temporal.activity.QuickBooksActivities;
 import io.temporal.spring.boot.WorkflowImpl;
 import io.temporal.workflow.Workflow;
 
+import java.util.List;
+
 import static com.icligo.quickbooks.temporal.activity.QuickBooksActivitiesImpl.TASK_QUEUE;
 
 /**
@@ -34,7 +36,7 @@ public class CreateRefundReceiptWorkflowImpl implements CreateRefundReceiptWorkf
             Workflow.newActivityStub(QuickBooksActivities.class, TemporalActivityOptions.PERSIST);
 
     @Override
-    public QuickBooksDocument execute(QuickBooksDocument document) {
+    public List<QuickBooksDocument> execute(QuickBooksDocument document) {
         Workflow.getLogger(CreateRefundReceiptWorkflowImpl.class)
                 .info("CreateRefundReceiptWorkflow started – refundId={}", document.getRefundId());
 
@@ -60,6 +62,6 @@ public class CreateRefundReceiptWorkflowImpl implements CreateRefundReceiptWorkf
         Workflow.getLogger(CreateRefundReceiptWorkflowImpl.class)
                 .info("CreateRefundReceiptWorkflow completed – refundId={}", refund.getId());
 
-        return saved;
+        return List.of(saved);
     }
 }

@@ -1,7 +1,6 @@
 package com.icligo.quickbooks.temporal.activity;
 
 import com.icligo.quickbooks.clients.quickbooks.model.*;
-import com.icligo.quickbooks.enums.SalesDocumentTypes;
 import com.icligo.quickbooks.model.QuickBooksDocument;
 import com.icligo.quickbooks.model.document.ClientInvoiceInfo;
 import com.icligo.quickbooks.model.document.ItemDto;
@@ -220,11 +219,11 @@ public class QuickBooksActivitiesImpl implements QuickBooksActivities {
     // ─────────────────────────────────────────────────────────────────────────
 
     @Override
-    public void cancelSalesReceiptsForBooking(String serviceId) {
+    public List<QuickBooksDocument> cancelSalesReceiptsForBooking(String serviceId) {
         log.info("[Activity] cancelSalesReceiptsForBooking – serviceId={}", serviceId);
         // Best-effort by design (see SalesReceiptCancellationService) — never throws, so this
         // never retries and never fails the Invoice-creation workflow that calls it.
-        salesReceiptCancellationService.cancelSalesReceiptsForServiceId(serviceId);
+        return salesReceiptCancellationService.cancelSalesReceiptsForServiceId(serviceId);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -324,25 +323,13 @@ public class QuickBooksActivitiesImpl implements QuickBooksActivities {
     }
 
     /**
-     * Note: these DocNumber prefixes (INV/SRC/RRC) are independent of {@link SalesDocumentTypes}'
-     * request-facing type codes (INV/SRT/RRT) — SALES_RECEIPT and REFUND_RECEIPT happen to use
-     * different abbreviations here than in the request {@code type} field. Don't conflate them.
+     * DocNumber = controlKey for every document type — {@link com.icligo.quickbooks.temporal.TemporalDocumentService#create}
+     * already computes and sets {@code controlKey} on {@code document} before the workflow (and
+     * therefore this activity) runs, so QuickBooks' own DocNumber and this service's internal
+     * idempotency key are always the same value, visible directly on the QuickBooks document.
      */
     private String buildDocNumber(QuickBooksDocument document) {
-        SalesDocumentTypes type = SalesDocumentTypes.getByValue(document.getType().toUpperCase());
-        if (type == null) {
-            throw new IllegalArgumentException("Unsupported document type: " + document.getType());
-        }
-        return switch (type) {
-            case INVOICE -> "INV" + document.getServiceId();
-            case SALES_RECEIPT -> "SRC" + document.getProductId();
-            case REFUND_RECEIPT -> "RRC" + document.getProductId() + "_rfd" + document.getRefundId();
-            // Not actually reached today — CreditMemos are built directly in
-            // SalesReceiptCancellationService, not through createInvoice/createSalesReceipt/
-            // createRefundReceipt — kept here only so this switch stays exhaustive, using the
-            // same "NCC" prefix convention as that class.
-            case CREDIT_MEMO -> "NCC" + document.getProductId();
-        };
+        return document.getControlKey();
     }
 
     /**

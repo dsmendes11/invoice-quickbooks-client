@@ -49,10 +49,16 @@ public class DocumentController {
                     Creates an INVOICE, SALES_RECEIPT or REFUND_RECEIPT in QuickBooks via a Temporal \
                     workflow. The QuickBooks customer is looked up by email/name and created \
                     automatically if it doesn't exist yet. Transient QuickBooks/network failures are \
-                    retried by the workflow before this call returns.""")
+                    retried by the workflow before this call returns.
+
+                    Returns every document this call emitted, not just one: for a booking \
+                    ("Reserva") INV, that's the Invoice itself plus any CreditMemos created \
+                    cancelling prior Sales Receipts for the same serviceId (e.g. [INV, CDM, CDM]) \
+                    — see docs/OPERATIONS.md §6. For SRT (or a plain, non-booking INV), the array \
+                    always has exactly one element.""")
     @ApiResponses({
-            @ApiResponse(responseCode = "201", description = "Document created",
-                    content = @Content(schema = @Schema(implementation = QuickBooksDocument.class))),
+            @ApiResponse(responseCode = "201", description = "Document(s) created",
+                    content = @Content(array = @ArraySchema(schema = @Schema(implementation = QuickBooksDocument.class)))),
             @ApiResponse(responseCode = "400", description = "Request failed validation (missing/invalid fields)",
                     content = @Content(schema = @Schema(implementation = ApiError.class))),
             @ApiResponse(responseCode = "401", description = "Missing or invalid auth-token header",
@@ -61,9 +67,9 @@ public class DocumentController {
                     content = @Content(schema = @Schema(implementation = ApiError.class))),
     })
     @PostMapping
-    public ResponseEntity<QuickBooksDocument> create(@Valid @RequestBody QuickBooksDocument document) {
+    public ResponseEntity<List<QuickBooksDocument>> create(@Valid @RequestBody QuickBooksDocument document) {
         log.info("POST /documents – type={}", document.getType());
-        QuickBooksDocument created = temporalDocumentService.create(document);
+        List<QuickBooksDocument> created = temporalDocumentService.create(document);
         return ResponseEntity.status(HttpStatus.CREATED).body(created);
     }
 
@@ -153,8 +159,8 @@ public class DocumentController {
                     — it fails this request (`502`), since you asked for this specific credit \
                     right now.""")
     @ApiResponses({
-            @ApiResponse(responseCode = "200", description = "CreditMemo created (or already existed from a prior identical call)",
-                    content = @Content(schema = @Schema(implementation = QuickBooksDocument.class))),
+            @ApiResponse(responseCode = "200", description = "CreditMemo created (or already existed from a prior identical call) — always a single-element array",
+                    content = @Content(array = @ArraySchema(schema = @Schema(implementation = QuickBooksDocument.class)))),
             @ApiResponse(responseCode = "204", description = "This Sales Receipt has nothing left open to credit — nothing was done"),
             @ApiResponse(responseCode = "401", description = "Missing or invalid auth-token header",
                     content = @Content(schema = @Schema(implementation = ApiError.class))),
@@ -164,10 +170,10 @@ public class DocumentController {
                     content = @Content(schema = @Schema(implementation = ApiError.class))),
     })
     @GetMapping("/invoices/creditnote/{controlKey}")
-    public ResponseEntity<QuickBooksDocument> createCreditNote(@PathVariable String controlKey) throws QuickBooksException {
+    public ResponseEntity<List<QuickBooksDocument>> createCreditNote(@PathVariable String controlKey) throws QuickBooksException {
         log.info("GET /documents/invoices/creditnote/{}", controlKey);
         return salesReceiptCancellationService.cancelSalesReceiptByControlKey(controlKey)
-                .map(ResponseEntity::ok)
+                .map(doc -> ResponseEntity.ok(List.of(doc)))
                 .orElseGet(() -> ResponseEntity.noContent().build());
     }
 

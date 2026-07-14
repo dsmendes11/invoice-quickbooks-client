@@ -15,6 +15,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.time.Year;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -53,9 +54,11 @@ public class TemporalDocumentService {
      * {@code serie} works.
      *
      * @param document the incoming request document
-     * @return the persisted document containing the QB response
+     * @return every document emitted by this call — the created/replayed document first, plus
+     *         (for a booking Invoice) any CreditMemos created cancelling prior Sales Receipts,
+     *         e.g. {@code [INV, CDM, CDM]}. Just a single-element list for SRT/RRT, or on replay.
      */
-    public QuickBooksDocument create(QuickBooksDocument document) {
+    public List<QuickBooksDocument> create(QuickBooksDocument document) {
         if (document.getClientInvoiceInfo() == null) {
             throw new IllegalArgumentException("clientInvoiceInfo is required");
         }
@@ -88,17 +91,17 @@ public class TemporalDocumentService {
         if (existing.isPresent()) {
             log.info("Idempotent replay for controlKey={} – returning existing document id={}",
                     controlKey, existing.get().getId());
-            return attachDocumentPdfLink(existing.get());
+            return List.of(attachDocumentPdfLink(existing.get()));
         }
         document.setControlKey(controlKey);
 
-        QuickBooksDocument created = switch (type) {
+        List<QuickBooksDocument> created = switch (type) {
             case INVOICE -> runInvoiceWorkflow(document);
             case SALES_RECEIPT -> runSalesReceiptWorkflow(document);
             case REFUND_RECEIPT -> runRefundReceiptWorkflow(document);
             case CREDIT_MEMO -> throw new IllegalStateException("unreachable");
         };
-        return attachDocumentPdfLink(created);
+        return created.stream().map(this::attachDocumentPdfLink).toList();
     }
 
     /**
@@ -138,7 +141,7 @@ public class TemporalDocumentService {
     // Private helpers
     // ─────────────────────────────────────────────────────────────────────────
 
-    private QuickBooksDocument runInvoiceWorkflow(QuickBooksDocument document) {
+    private List<QuickBooksDocument> runInvoiceWorkflow(QuickBooksDocument document) {
         String workflowId = "create-invoice-" + document.getServiceId() + "-" + uuid();
         log.info("Starting CreateInvoiceWorkflow workflowId={}", workflowId);
 
@@ -150,7 +153,7 @@ public class TemporalDocumentService {
         return workflow.execute(document);
     }
 
-    private QuickBooksDocument runSalesReceiptWorkflow(QuickBooksDocument document) {
+    private List<QuickBooksDocument> runSalesReceiptWorkflow(QuickBooksDocument document) {
         String workflowId = "create-sales-receipt-" + document.getProductId() + "-" + uuid();
         log.info("Starting CreateSalesReceiptWorkflow workflowId={}", workflowId);
 
@@ -162,7 +165,7 @@ public class TemporalDocumentService {
         return workflow.execute(document);
     }
 
-    private QuickBooksDocument runRefundReceiptWorkflow(QuickBooksDocument document) {
+    private List<QuickBooksDocument> runRefundReceiptWorkflow(QuickBooksDocument document) {
         String workflowId = "create-refund-receipt-" + document.getRefundId() + "-" + uuid();
         log.info("Starting CreateRefundReceiptWorkflow workflowId={}", workflowId);
 
