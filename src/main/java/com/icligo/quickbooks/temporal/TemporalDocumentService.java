@@ -11,6 +11,7 @@ import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowOptions;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.time.Year;
@@ -33,6 +34,9 @@ public class TemporalDocumentService {
 
     private final WorkflowClient workflowClient;
     private final QuickBooksDocumentRepository documentRepository;
+
+    @Value("${api.base-path}")
+    private String basePath;
 
     /**
      * Dispatch a document creation request to the appropriate Temporal workflow.
@@ -94,6 +98,11 @@ public class TemporalDocumentService {
             return toInvoices(List.of(existing.get()));
         }
         document.setControlKey(controlKey);
+        // Set before the workflow runs (not after) so it's part of what saveDocument persists to
+        // Mongo — the API response itself no longer returns this envelope field (see #toInvoices),
+        // but the stored record should still have it, same as SalesReceiptCancellationService
+        // already does for CreditMemos.
+        document.setDocumentPDF(basePath + "/documents/" + controlKey + "/pdf");
 
         List<QuickBooksDocument> created = switch (type) {
             case INVOICE -> runInvoiceWorkflow(document);

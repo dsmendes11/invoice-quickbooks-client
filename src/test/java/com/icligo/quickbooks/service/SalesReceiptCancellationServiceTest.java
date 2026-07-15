@@ -5,6 +5,7 @@ import com.icligo.quickbooks.clients.quickbooks.model.Line;
 import com.icligo.quickbooks.clients.quickbooks.model.ReferenceType;
 import com.icligo.quickbooks.clients.quickbooks.model.SalesReceipt;
 import com.icligo.quickbooks.enums.SalesDocumentTypes;
+import com.icligo.quickbooks.model.EditSplitCrediteNoteResponseDto;
 import com.icligo.quickbooks.model.QuickBooksDocument;
 import com.icligo.quickbooks.repository.QuickBooksDocumentRepository;
 import com.icligo.quickbooks.service.authentication.QuickBooksAlertService;
@@ -197,11 +198,14 @@ class SalesReceiptCancellationServiceTest {
         when(documentRepository.findByControlKey(controlKey("prod-8"))).thenReturn(Optional.empty());
         when(documentRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
-        Optional<QuickBooksDocument> result = service.cancelSalesReceiptByControlKey("SRTprod-82026");
+        Optional<EditSplitCrediteNoteResponseDto> result = service.cancelSalesReceiptByControlKey("SRTprod-82026");
 
         assertThat(result).isPresent();
-        assertThat(result.get().getType()).isEqualTo("CDM");
-        assertThat(result.get().getControlKey()).isEqualTo(controlKey("prod-8"));
+        assertThat(result.get().getCrediteNoteValue()).isEqualByComparingTo("50.00");
+        assertThat(result.get().getProductId()).isEqualTo("prod-8");
+        assertThat(result.get().getDocuments()).hasSize(1);
+        assertThat(result.get().getDocuments().get(0)).isInstanceOf(CreditMemo.class);
+        assertThat(((CreditMemo) result.get().getDocuments().get(0)).getId()).isEqualTo("qb-cdm-8");
         verifyNoInteractions(alertService);
     }
 
@@ -213,7 +217,7 @@ class SalesReceiptCancellationServiceTest {
         when(documentRepository.findByControlKey("SRTprod-92026")).thenReturn(Optional.of(salesReceiptDoc));
         when(activeSalesReceiptFinder.findActiveForDocument(salesReceiptDoc)).thenReturn(Optional.empty());
 
-        Optional<QuickBooksDocument> result = service.cancelSalesReceiptByControlKey("SRTprod-92026");
+        Optional<EditSplitCrediteNoteResponseDto> result = service.cancelSalesReceiptByControlKey("SRTprod-92026");
 
         assertThat(result).isEmpty();
         verifyNoInteractions(creditMemoService, alertService);

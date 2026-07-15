@@ -7,6 +7,7 @@ import com.icligo.quickbooks.clients.quickbooks.model.ReferenceType;
 import com.icligo.quickbooks.clients.quickbooks.model.SalesItemLineDetail;
 import com.icligo.quickbooks.clients.quickbooks.model.SalesReceipt;
 import com.icligo.quickbooks.enums.SalesDocumentTypes;
+import com.icligo.quickbooks.model.EditSplitCrediteNoteResponseDto;
 import com.icligo.quickbooks.model.QuickBooksDocument;
 import com.icligo.quickbooks.model.document.ItemDto;
 import com.icligo.quickbooks.repository.QuickBooksDocumentRepository;
@@ -95,13 +96,14 @@ public class SalesReceiptCancellationService {
      * everything else), so a Sales Receipt already fully credited/refunded correctly reports
      * "nothing to do" rather than crediting it again.
      *
-     * @return the created (or, on idempotent replay, already-existing) CreditMemo document, or
-     *         empty if this Sales Receipt has nothing left open to credit.
+     * @return the credited value/productId plus the created (or, on idempotent replay,
+     *         already-existing) CreditMemo's raw QuickBooks entity, or empty if this Sales
+     *         Receipt has nothing left open to credit.
      * @throws NoSuchElementException if {@code controlKey} doesn't identify a Sales Receipt
      *         document at all.
      * @throws QuickBooksException if QuickBooks rejects or fails the CreditMemo creation.
      */
-    public Optional<QuickBooksDocument> cancelSalesReceiptByControlKey(String controlKey) throws QuickBooksException {
+    public Optional<EditSplitCrediteNoteResponseDto> cancelSalesReceiptByControlKey(String controlKey) throws QuickBooksException {
         QuickBooksDocument salesReceiptDoc = documentRepository.findByControlKey(controlKey)
                 .filter(doc -> SalesDocumentTypes.SALES_RECEIPT.getValue().equals(doc.getType()))
                 .orElseThrow(() -> new NoSuchElementException("No SalesReceipt document found with controlKey=" + controlKey));
@@ -112,7 +114,12 @@ public class SalesReceiptCancellationService {
             return Optional.empty();
         }
 
-        return Optional.of(cancelOne(active.get()));
+        QuickBooksDocument creditMemoDoc = cancelOne(active.get());
+        return Optional.of(EditSplitCrediteNoteResponseDto.builder()
+                .crediteNoteValue(active.get().availableBalance())
+                .productId(salesReceiptDoc.getProductId())
+                .documents(List.of(creditMemoDoc.getInvoice()))
+                .build());
     }
 
     private QuickBooksDocument cancelOne(ActiveSalesReceipt activeSalesReceipt) throws QuickBooksException {

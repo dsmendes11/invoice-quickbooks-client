@@ -2,6 +2,7 @@ package com.icligo.quickbooks.controller;
 
 import com.icligo.quickbooks.exception.ApiError;
 import com.icligo.quickbooks.model.ClientServiceValueInfo;
+import com.icligo.quickbooks.model.EditSplitCrediteNoteResponseDto;
 import com.icligo.quickbooks.model.InvoiceDetailDto;
 import com.icligo.quickbooks.model.QuickBooksDocument;
 import com.icligo.quickbooks.service.ClientAggregationService;
@@ -161,8 +162,8 @@ public class DocumentController {
                     — it fails this request (`502`), since you asked for this specific credit \
                     right now.""")
     @ApiResponses({
-            @ApiResponse(responseCode = "200", description = "CreditMemo created (or already existed from a prior identical call) — always a single-element array",
-                    content = @Content(array = @ArraySchema(schema = @Schema(implementation = Object.class)))),
+            @ApiResponse(responseCode = "200", description = "CreditMemo created (or already existed from a prior identical call)",
+                    content = @Content(schema = @Schema(implementation = EditSplitCrediteNoteResponseDto.class))),
             @ApiResponse(responseCode = "204", description = "This Sales Receipt has nothing left open to credit — nothing was done"),
             @ApiResponse(responseCode = "401", description = "Missing or invalid auth-token header",
                     content = @Content(schema = @Schema(implementation = ApiError.class))),
@@ -172,10 +173,10 @@ public class DocumentController {
                     content = @Content(schema = @Schema(implementation = ApiError.class))),
     })
     @GetMapping("/invoices/creditnote/{controlKey}")
-    public ResponseEntity<List<Object>> createCreditNote(@PathVariable String controlKey) throws QuickBooksException {
+    public ResponseEntity<EditSplitCrediteNoteResponseDto> createCreditNote(@PathVariable String controlKey) throws QuickBooksException {
         log.info("GET /documents/invoices/creditnote/{}", controlKey);
         return salesReceiptCancellationService.cancelSalesReceiptByControlKey(controlKey)
-                .map(doc -> ResponseEntity.ok(List.of(doc.getInvoice())))
+                .map(ResponseEntity::ok)
                 .orElseGet(() -> ResponseEntity.noContent().build());
     }
 

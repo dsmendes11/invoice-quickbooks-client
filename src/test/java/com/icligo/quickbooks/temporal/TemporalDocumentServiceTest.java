@@ -8,6 +8,7 @@ import com.icligo.quickbooks.temporal.workflow.CreateInvoiceWorkflow;
 import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowOptions;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Year;
 import java.util.List;
@@ -24,6 +25,10 @@ class TemporalDocumentServiceTest {
     private final QuickBooksDocumentRepository documentRepository = mock(QuickBooksDocumentRepository.class);
     private final TemporalDocumentService service =
             new TemporalDocumentService(workflowClient, documentRepository);
+
+    {
+        ReflectionTestUtils.setField(service, "basePath", "/invoice-quickbooks-service/v1");
+    }
 
     @Test
     void newRequestReturnsTheRawQuickBooksEntityFromTheWorkflow() {
@@ -104,6 +109,10 @@ class TemporalDocumentServiceTest {
         assertThat(result).hasSize(1);
         assertThat(request.getControlKey()).isEqualTo(expectedControlKey("INV", "70021", ""));
         assertThat(request.getSerie()).isEqualTo(String.valueOf(Year.now().getValue()));
+        // Set on the request before the workflow runs, so saveDocument persists it to Mongo —
+        // even though it's no longer part of the API response itself (see #toInvoices).
+        assertThat(request.getDocumentPDF())
+                .isEqualTo("/invoice-quickbooks-service/v1/documents/" + expectedControlKey("INV", "70021", "") + "/pdf");
         verify(workflowStub).execute(request);
     }
 

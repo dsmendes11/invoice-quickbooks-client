@@ -329,10 +329,29 @@ curl -H "auth-token: $AUTH_TOKEN" \
 
 | Status | Meaning |
 |---|---|
-| `200` | A CreditMemo was created (or already existed from an earlier identical call) — body is a single-element JSON array `[CreditMemo]`, the raw QuickBooks entity, same shape as §3.5 |
+| `200` | A CreditMemo was created (or already existed from an earlier identical call) |
 | `204` | This Sales Receipt has nothing left open to credit — no body |
 | `404` | No Sales Receipt document exists with this `controlKey` |
 | `502` | QuickBooks rejected or failed the CreditMemo request |
+
+Unlike every other endpoint here, `200`'s body is **not** a bare array — it's an object
+(mirroring the invoice-management-system's own `EditSplitCrediteNoteResponseDto`, just without
+its Primavera-specific `faaProductId` naming):
+
+```json
+{
+  "crediteNoteValue": 49.90,
+  "productId": "70021",
+  "documents": [ { "Id": "...", "DocNumber": "CDM700212026", "TotalAmt": 49.90, "...": "..." } ]
+}
+```
+
+- `crediteNoteValue` — the amount actually credited (the Sales Receipt's still-open balance at
+  the time of the call, same accounting as §6/§4).
+- `productId` — the credited Sales Receipt's `productId`.
+- `documents` — always a single-element array containing the raw QuickBooks `CreditMemo` entity
+  (same shape as every entity in §3.5's array — its `DocNumber` is the CreditMemo's own
+  `controlKey`, usable with §5 to fetch its PDF).
 
 Unlike the automatic cancellation that runs when a booking Invoice is created (best-effort —
 failures are only emailed to an admin, docs/OPERATIONS.md §6), a failure on **this** endpoint is
